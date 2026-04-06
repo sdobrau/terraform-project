@@ -1,7 +1,8 @@
 # * elb, certificate, target group, attachment and autoscaling group
 
 provider "aws" {
-  alias = "us-east-1"
+  alias  = "us-east-1"
+  region = "us-east-1"
 }
 
 # an elb configured with a listener fwds traffic to a target group
@@ -14,24 +15,24 @@ provider "aws" {
 
 # ** the certificate for the listener
 
-# resource "aws_acm_certificate" "web_server_alb" {
-#   domain_name       = var.domain_name
-#   validation_method = "DNS"
+resource "aws_acm_certificate" "web_server_alb" {
+  domain_name       = var.domain_name
+  validation_method = "DNS"
 
-#   lifecycle {
-#     create_before_destroy = true
-#   }
-# }
+  lifecycle {
+    create_before_destroy = true
+  }
+}
 
 # ** the dns zone
 # *** the cloudwatch log group and relevants for dns query logging
 
-resource "aws_cloudwatch_log_group" "web_server_alb_dns_query_logging" { # OK
-  provider                    = aws.us-east-1
+resource "aws_cloudwatch_log_group" "web_server_alb_dns_query_logging" {
   name                        = "/aws/route53/${aws_route53_zone.playing_cloud.name}"
   retention_in_days           = 365
   log_group_class             = "INFREQUENT_ACCESS"
   deletion_protection_enabled = false
+  provider                    = "aws.us-east-1"
   # TODO: sse-c sometime
   # until then
   # api error AccessDeniedException: The specified KMS key does not exist or is
@@ -43,51 +44,55 @@ resource "aws_cloudwatch_log_group" "web_server_alb_dns_query_logging" { # OK
 
 # allow r53 to push to cloudwatch logs /aws/route53 log group
 
+data "aws_iam_policy_document" "web_server_alb_dns_query_logging" {
+  statement {
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
 
-# TODO: NOT OK
-# │ Error: creating CloudWatch Logs Resource Policy (): operation error CloudWatch Logs: PutResourcePolicy, https response error StatusCode: 400, RequestID: d6440cfc-d18b-4152-be24-3503d8d854d1, api error ValidationException: Invalid # resourceArn
-# data "aws_iam_policy_document" "web_server_alb_dns_query_logging" {
-#   statement {
-#     actions = [
-#       "logs:CreateLogStream",
-#       "logs:PutLogEvents",
-#     ]
+    resources = ["*"]
 
-#     resources = ["arn:aws:logs:*:*:log-group:/aws/route53/*"]
+    principals {
+      identifiers = ["route53.amazonaws.com"]
+      type        = "Service"
+    }
+  }
+}
 
-#     principals {
-#       identifiers = ["route53.amazonaws.com"]
-#       type        = "Service"
-#     }
-#   }
-# }
-
-# resource "aws_cloudwatch_log_resource_policy" "web_server_alb_dns_query_logging" { #
-#   provider        = aws.us-east-1
-#   policy_document = data.aws_iam_policy_document.web_server_alb_dns_query_logging.json
-#   resource_arn    = aws_cloudwatch_log_group.web_server_alb_dns_query_logging.arn
-# }
+resource "aws_cloudwatch_log_resource_policy" "web_server_alb_dns_query_logging" {
+  provider        = "aws.us-east-1"
+  policy_document = data.aws_iam_policy_document.web_server_alb_dns_query_logging.json
+  policy_name     = "web_server_alb_dns_query_logging"
+}
 
 # *** the query logging setting for the zone
 
-# NOTE: place zone before query log for the aws_route_query_log to work
-# or depends_on
-resource "aws_route53_zone" "playing_cloud" {
-  name = var.domain_name
+# for zone_id log the queries in a cloudwatch log group
+resource "aws_route53_query_log" "web_server_alb_dns_query_logging" {
+  provider   = aws.us-east-1
+  depends_on = [aws_cloudwatch_log_resource_policy.web_server_alb_dns_query_logging]
+
+  cloudwatch_log_group_arn = aws_cloudwatch_log_group.web_server_alb_dns_query_logging.arn
+  zone_id                  = aws_route53_zone.playing_cloud.zone_id
+
 }
 
-# TODO:
-# err
-# : CreateQueryLoggingConfig, https response error StatusCode: 400, RequestID: cfebf9bb-b03e-4a5c-8c3a-bf9cc7cb1d41, InvalidInput: The ARN for the CloudWatch Logs log group is invalid.
+resource "aws_route53_zone" "playing_cloud" {
+  depends_on = [aws_cloudwatch_log_resource_policy.web_server_alb_dns_query_logging]
+  name       = var.domain_name
+}
 
-# # for zone_id log the queries in a cloudwatch log group
-# resource "aws_route53_query_log" "web_server_alb_dns_query_logging" {
-#   provider = aws.us-east-1
-#   # depends_on = [aws_cloudwatch_log_resource_policy.web_server_alb_dns_query_logging]
+# ** TODO: create r53 TXT record in the zone with the verification token
 
-#   cloudwatch_log_group_arn = aws_cloudwatch_log_group.web_server_alb_dns_query_logging.arn
-#   zone_id                  = aws_route53_zone.playing_cloud.zone_id
+# ** TODO the records for the certificate validation
 
+# resource "aws_route53_record" "txt" {
+#   zone_id = aws_route53_zone.playing_cloud.zone_id
+#   name    = "<<VERIFICATION_TOKEN_NAME>>.113.0.203.in-addr.arpa" #
+#   type    = "TXT"
+#   ttl     = 300
+#   records = "<<VERIFICATION_TOKEN_VALUE>>"
 # }
 
 # ** TODO the load balancer # TODO eip for load balancer
@@ -96,40 +101,29 @@ resource "aws_route53_zone" "playing_cloud" {
 
 # Create a new load balancer
 resource "aws_alb" "web_server" {
-  name = "web-server"
-
-  timeouts {
-    create = "1m"
-    delete = "1m"
-    update = "1m"
-  }
-
+  name                       = "web-server"
   internal                   = false # not internal but alb
   drop_invalid_header_fields = true  # drop HTTP headers
-  enable_deletion_protection = false
-  subnets = [
-    var.web_server_alb_public_subnet_1_id,
-    var.web_server_alb_public_subnet_2_id]
+  enable_deletion_protection = true
+  subnets                    = [var.web_server_alb_public_subnet_1_id, var.web_server_alb_public_subnet_2_id]
 
-  # ModifyLoadBalancerAttributes, https response error StatusCode: 400, RequestID: 3ab60311-2b06-4b95-ab3d-d862aedb6cbf, InvalidConfigurationRequest: S3Bucket validation transient issue
-  # # TODO: check permissions in log-bucket and ensure correct
-  # access_logs {
-  #   bucket  = var.log_bucket_id
-  #   prefix  = "access_logs"
-  #   enabled = true
-  # }
+  access_logs {
+    bucket  = var.log_bucket_id
+    prefix  = "access_logs"
+    enabled = true
+  }
 
-  # connection_logs {
-  #   bucket  = var.log_bucket_id
-  #   prefix  = "alb_connection_logs"
-  #   enabled = true
-  # }
+  connection_logs {
+    bucket  = var.log_bucket_id
+    prefix  = "alb-connection-logs/"
+    enabled = true
+  }
 
-  # health_check_logs {
-  #   bucket  = var.log_bucket_id
-  #   enabled = true
-  #   prefix  = "alb_health_check_logs"
-  # }
+  health_check_logs {
+    bucket  = var.log_bucket_id
+    enabled = true
+    prefix  = "alb-health-check-logs/"
+  }
 
   # # auto-healing
   # health_check { not valid
@@ -141,7 +135,7 @@ resource "aws_alb" "web_server" {
   # }
 
   # cross_zone_load_balancing   = true # not valid
-  # idle_timeout = 400
+  idle_timeout = 400
   # connection_draining         = true # not valid
   # connection_draining_timeout = 400 # not valid
 
@@ -165,23 +159,19 @@ resource "aws_lb_listener_rule" "web_server_alb_secret_header_only" {
 }
 
 # *** the listener
-resource "aws_alb_listener" "web_server" { # OK
-  load_balancer_arn                    = aws_alb.web_server.arn
-  port                                 = "443"
-  protocol                             = "HTTPS"
-  ssl_policy                           = "ELBSecurityPolicy-2016-08"
-  certificate_arn                      = var.aws_playing_cloud_xyz_certificate_arn
-  routing_http_response_server_enabled = false # no aws/elb2.0 Server
+
+
+resource "aws_alb_listener" "web_server" {
+  load_balancer_arn = aws_alb.web_server.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn   = "arn:aws:iam::${var.aws_source_account_id}:server-certificate/web_server_alb"
 
   default_action {
-    type = "fixed-response" # if no secretvalue provided
-    fixed_response {
-      content_type = "text/plain"
-      message_body = "Secret value not provided"
-      status_code  = "403"
-    }
+    type             = "forward"
+    target_group_arn = aws_alb_target_group.web_server.arn
   }
-
 }
 
 # *** the autoscaling group
@@ -191,16 +181,15 @@ resource "aws_alb_listener" "web_server" { # OK
 # https://registry.terraform.io/providers/-/aws/5.0.0/docs/resources/autoscaling_group#instance_refresh-1
 # https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-overview.html
 
-resource "aws_autoscaling_group" "web_server" { # OK
+resource "aws_autoscaling_group" "web_server" {
   name                      = "web_server_asg"
   max_size                  = 3
   min_size                  = 1
   health_check_grace_period = 300
   health_check_type         = "ELB"
-  desired_capacity          = 1
+  desired_capacity          = 3
   force_delete              = true
-  # TODO: scheduled action to turn off everyday at 12 AM and turn on at 7 AM
-  placement_group = aws_placement_group.web_server_asg_spread_placement_group.id
+  placement_group           = aws_placement_group.web_server_asg_spread_placement_group.id
 
   launch_template {
     id      = aws_launch_template.web_server.id
@@ -230,14 +219,14 @@ resource "aws_autoscaling_group" "web_server" { # OK
 
 # *** the autoscaling attachment
 
-resource "aws_autoscaling_attachment" "web_server" { # OK
+resource "aws_autoscaling_attachment" "web_server" {
   autoscaling_group_name = aws_autoscaling_group.web_server.name
   lb_target_group_arn    = aws_alb_target_group.web_server.arn
 }
 
 # *** the target group
 
-resource "aws_alb_target_group" "web_server" { # OK
+resource "aws_alb_target_group" "web_server" {
   name        = "web-server"
   port        = 443
   protocol    = "HTTPS"
@@ -291,7 +280,6 @@ resource "aws_launch_template" "web_server" {
     ebs {
       # TODO: snapshotting
       volume_size = 20
-      encrypted   = true
       kms_key_id  = var.adminaccount_web_key_id
 
     }
@@ -324,14 +312,14 @@ resource "aws_launch_template" "web_server" {
   network_interfaces {
     associate_public_ip_address = false # private hosts
     subnet_id                   = var.web_server_instances_private_subnet_id
-    # TODO: network_interfaces.security_groups vs vpc_security_group_ids
-    security_groups = [aws_security_group.https_ingress_only_from_cloudfront.id]
   }
 
   placement {
     availability_zone = "us-east-1a"
     group_name        = "web_server_asg_spread_placement_group"
   }
+
+  security_group_names = ["web_server_alb_allow_cloudfront_only"]
 
   tag_specifications {
     resource_type = "instance"
