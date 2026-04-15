@@ -1,7 +1,7 @@
 # * elb, certificate, target group, attachment and autoscaling group
 
-provider "aws" {
-  alias = "us-east-1"
+data "aws_region" "current" {
+  provider = aws
 }
 
 # an elb configured with a listener fwds traffic to a target group
@@ -14,108 +14,87 @@ provider "aws" {
 
 # ** the certificate for the listener
 
-# resource "aws_acm_certificate" "web_server_alb" {
-#   domain_name       = var.domain_name
-#   validation_method = "DNS"
-
-#   lifecycle {
-#     create_before_destroy = true
-#   }
-# }
-
 # ** the dns zone
 # *** the cloudwatch log group and relevants for dns query logging
 
 resource "aws_cloudwatch_log_group" "web_server_alb_dns_query_logging" { # OK
-  provider                    = aws.us-east-1
   name                        = "/aws/route53/${aws_route53_zone.playing_cloud.name}"
   retention_in_days           = 365
-  log_group_class             = "INFREQUENT_ACCESS"
-  deletion_protection_enabled = false
-  # TODO: sse-c sometime
-  # until then
-  # api error AccessDeniedException: The specified KMS key does not exist or is
-  # not allowed to be used with Arn
-  # 'arn:aws:logs:us-east-1:276719381645:log-group:/aws/route53/playing-cloud.co.uk'
-  # even with policy set, see commented out policy web_cloudwatch_us_east
-  # kms_key_id = var.web_cloudwatch_us_east_key_arn
+  log_group_class             = "STANDARD"
+  deletion_protection_enabled = true
+  kms_key_id                  = var.adminaccount_web_key_arn
 }
 
 # allow r53 to push to cloudwatch logs /aws/route53 log group
 
+data "aws_iam_policy_document" "web_server_alb_dns_query_logging" { # OK
+  statement {
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+    ]
 
-# TODO: NOT OK
-# │ Error: creating CloudWatch Logs Resource Policy (): operation error CloudWatch Logs: PutResourcePolicy, https response error StatusCode: 400, RequestID: d6440cfc-d18b-4152-be24-3503d8d854d1, api error ValidationException: Invalid # resourceArn
-# data "aws_iam_policy_document" "web_server_alb_dns_query_logging" {
-#   statement {
-#     actions = [
-#       "logs:CreateLogStream",
-#       "logs:PutLogEvents",
-#     ]
+    resources = ["arn:aws:logs:*:*:log-group:/aws/route53/*"]
 
-#     resources = ["arn:aws:logs:*:*:log-group:/aws/route53/*"]
+    principals {
+      identifiers = ["route53.amazonaws.com"]
+      type        = "Service"
+    }
+  }
+}
 
-#     principals {
-#       identifiers = ["route53.amazonaws.com"]
-#       type        = "Service"
-#     }
-#   }
-# }
+resource "aws_cloudwatch_log_resource_policy" "web_server_alb_dns_query_logging" { # OK
 
-# resource "aws_cloudwatch_log_resource_policy" "web_server_alb_dns_query_logging" { #
-#   provider        = aws.us-east-1
-#   policy_document = data.aws_iam_policy_document.web_server_alb_dns_query_logging.json
-#   resource_arn    = aws_cloudwatch_log_group.web_server_alb_dns_query_logging.arn
-# }
+  policy_document = data.aws_iam_policy_document.web_server_alb_dns_query_logging.json
+  policy_name     = "web_server_alb_dns_query_logging" #
+}
 
 # *** the query logging setting for the zone
 
 # NOTE: place zone before query log for the aws_route_query_log to work
 # or depends_on
-resource "aws_route53_zone" "playing_cloud" {
+resource "aws_route53_zone" "playing_cloud" { # NOTOK
   name = var.domain_name
 }
 
-# TODO:
-# err
-# : CreateQueryLoggingConfig, https response error StatusCode: 400, RequestID: cfebf9bb-b03e-4a5c-8c3a-bf9cc7cb1d41, InvalidInput: The ARN for the CloudWatch Logs log group is invalid.
+# for zone_id log the queries in a cloudwatch log group
+resource "aws_route53_query_log" "web_server_alb_dns_query_logging" { # OK
+  # depends_on = [aws_cloudwatch_log_resource_policy.web_server_alb_dns_query_logging]
 
-# # for zone_id log the queries in a cloudwatch log group
-# resource "aws_route53_query_log" "web_server_alb_dns_query_logging" {
-#   provider = aws.us-east-1
-#   # depends_on = [aws_cloudwatch_log_resource_policy.web_server_alb_dns_query_logging]
+  cloudwatch_log_group_arn = aws_cloudwatch_log_group.web_server_alb_dns_query_logging.arn
+  zone_id                  = aws_route53_zone.playing_cloud.zone_id
 
-#   cloudwatch_log_group_arn = aws_cloudwatch_log_group.web_server_alb_dns_query_logging.arn
-#   zone_id                  = aws_route53_zone.playing_cloud.zone_id
+}
 
-# }
-
-# ** TODO the load balancer # TODO eip for load balancer
+# ** the load balancer
 
 # *** the load balancer: main
 
 # Create a new load balancer
-resource "aws_alb" "web_server" {
+resource "aws_alb" "web_server" { # OK
   name = "web-server"
 
   timeouts {
-    create = "1m"
-    delete = "1m"
-    update = "1m"
+    create = "10m"
+    delete = "10m"
+    update = "10m"
   }
+
+  # Check: CKV_AWS_150
 
   internal                   = false # not internal but alb
   drop_invalid_header_fields = true  # drop HTTP headers
-  enable_deletion_protection = false
+  enable_deletion_protection = false # Check: CKV_AWS_150
+  # security_groups            = [aws_security_group.https_ingress_only_from_cloudfront_egress_all.id]
   subnets = [
     var.web_server_alb_public_subnet_1_id,
-    var.web_server_alb_public_subnet_2_id]
+  var.web_server_alb_public_subnet_2_id]
 
-  # ModifyLoadBalancerAttributes, https response error StatusCode: 400, RequestID: 3ab60311-2b06-4b95-ab3d-d862aedb6cbf, InvalidConfigurationRequest: S3Bucket validation transient issue
-  # # TODO: check permissions in log-bucket and ensure correct
+  # TOFIX
+  # InvalidConfigurationRequest: Access Denied for bucket: web-server-logs-source-1. Please check S3bucket permission
   # access_logs {
   #   bucket  = var.log_bucket_id
-  #   prefix  = "access_logs"
+  #   prefix  = "alb_access_logs"
   #   enabled = true
   # }
 
@@ -130,24 +109,9 @@ resource "aws_alb" "web_server" {
   #   enabled = true
   #   prefix  = "alb_health_check_logs"
   # }
-
-  # # auto-healing
-  # health_check { not valid
-  #   healthy_threshold   = 2
-  #   unhealthy_threshold = 2
-  #   timeout             = 3
-  #   target              = "HTTP:443/"
-  #   interval            = 30
-  # }
-
-  # cross_zone_load_balancing   = true # not valid
-  # idle_timeout = 400
-  # connection_draining         = true # not valid
-  # connection_draining_timeout = 400 # not valid
-
 }
 
-resource "aws_lb_listener_rule" "web_server_alb_secret_header_only" {
+resource "aws_lb_listener_rule" "web_server_alb_secret_header_only" { # OK
   listener_arn = aws_alb_listener.web_server.arn
   priority     = 1
 
@@ -155,13 +119,18 @@ resource "aws_lb_listener_rule" "web_server_alb_secret_header_only" {
     type             = "forward" # fwd if secret header found
     target_group_arn = aws_alb_target_group.web_server.arn
   }
-
   condition {
-    http_header {
-      http_header_name = "X-Custom-Secret"
-      values           = [var.secret_header_value]
+    http_request_method {
+      values = ["GET"]
     }
   }
+
+  # condition {
+  #   http_header {
+  #     http_header_name = "X-Custom-Secret"
+  #     values           = [var.secret_header_value]
+  #   }
+  # }
 }
 
 # *** the listener
@@ -169,7 +138,7 @@ resource "aws_alb_listener" "web_server" { # OK
   load_balancer_arn                    = aws_alb.web_server.arn
   port                                 = "443"
   protocol                             = "HTTPS"
-  ssl_policy                           = "ELBSecurityPolicy-2016-08"
+  ssl_policy                           = "ELBSecurityPolicy-TLS-1-2-2017-01"
   certificate_arn                      = var.aws_playing_cloud_xyz_certificate_arn
   routing_http_response_server_enabled = false # no aws/elb2.0 Server
 
@@ -192,15 +161,18 @@ resource "aws_alb_listener" "web_server" { # OK
 # https://docs.aws.amazon.com/autoscaling/ec2/userguide/instance-refresh-overview.html
 
 resource "aws_autoscaling_group" "web_server" { # OK
+  # hard dependency on kms key
   name                      = "web_server_asg"
   max_size                  = 3
   min_size                  = 1
-  health_check_grace_period = 300
+  health_check_grace_period = 5
   health_check_type         = "ELB"
+  default_cooldown          = 20
   desired_capacity          = 1
-  force_delete              = true
-  # TODO: scheduled action to turn off everyday at 12 AM and turn on at 7 AM
-  placement_group = aws_placement_group.web_server_asg_spread_placement_group.id
+  wait_for_capacity_timeout = 0 # think
+  force_delete              = false
+  placement_group           = aws_placement_group.web_server_asg_spread_placement_group.id
+  availability_zones        = ["us-east-1a"]
 
   launch_template {
     id      = aws_launch_template.web_server.id
@@ -209,7 +181,6 @@ resource "aws_autoscaling_group" "web_server" { # OK
 
   # where to launch instances?
   # see vpc/main.tf
-  vpc_zone_identifier = [var.web_server_instances_private_subnet_id] # 10.0.1.0/24"
 
   tag {
     key                 = "component"
@@ -226,6 +197,110 @@ resource "aws_autoscaling_group" "web_server" { # OK
       auto_rollback          = true # if fail, then roll back
     }
   }
+}
+
+# *** the ebs DLM lifecycle policy
+
+data "aws_iam_policy_document" "web_server_dlm_lifecycle_assume_role" { # OK
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["dlm.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+resource "aws_iam_role" "web_server_dlm_lifecycle" { # OK
+  name               = "web_server_dlm_lifecycle"
+  assume_role_policy = data.aws_iam_policy_document.web_server_dlm_lifecycle_assume_role.json
+}
+
+data "aws_iam_policy_document" "web_server_dlm_lifecycle" { # OK
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "ec2:CreateSnapshot",
+      "ec2:CreateSnapshots",
+      "ec2:DeleteSnapshot",
+      "ec2:DescribeInstances",
+      "ec2:DescribeVolumes",
+      "ec2:DescribeSnapshots",
+    ]
+
+    #checkov:skip=CKV_AWS_111:Permissive permissions are for DLM function
+    #checkov:skip=CKV_AWS_356:Permissive permissions are for DLM function
+    resources = ["*"]
+  }
+
+  statement {
+    effect    = "Allow"
+    actions   = ["ec2:CreateTags"]
+    resources = ["arn:aws:ec2:*::snapshot/*"]
+  }
+}
+
+resource "aws_iam_role_policy" "web_server_dlm_lifecycle" { # OK
+  name   = "web_server_dlm_lifecycle"
+  role   = aws_iam_role.web_server_dlm_lifecycle.id
+  policy = data.aws_iam_policy_document.web_server_dlm_lifecycle.json
+}
+
+resource "aws_dlm_lifecycle_policy" "web_server" { # OK
+  description        = "Web server DLM lifecycle policy"
+  execution_role_arn = aws_iam_role.web_server_dlm_lifecycle.arn
+  state              = "ENABLED"
+
+  policy_details {
+    policy_type    = "EBS_SNAPSHOT_MANAGEMENT"
+    resource_types = ["VOLUME"]
+
+    schedule {
+      name = "1 week of daily snapshots"
+      create_rule {
+        interval      = 24 # each 24 hours
+        interval_unit = "HOURS"
+        times         = ["23:45"] # at 23:45
+      }
+
+      retain_rule {
+        count = 7 # retain only last 7 copies
+      }
+
+      tags_to_add = {
+        SnapshotCreator = "Web server DLM"
+      }
+
+      copy_tags = false
+    }
+
+    target_tags = {
+      Snapshot = "true" # see tag_specifications in launch_template
+    }
+  }
+}
+
+# *** the autoscaling schedule to scale to 0 at 2AM, spin up at 6AM
+
+resource "aws_autoscaling_schedule" "web_server_spin_down" { # OK
+  scheduled_action_name  = "web_server_spin_down"
+  max_size               = 0
+  desired_capacity       = 0
+  recurrence             = "0 2 * * *" # at 2AM
+  autoscaling_group_name = aws_autoscaling_group.web_server.name
+}
+
+resource "aws_autoscaling_schedule" "web_server_spin_up" { # OK
+  scheduled_action_name  = "web_server_spin_up"
+  max_size               = 3
+  min_size               = 1
+  desired_capacity       = 1
+  recurrence             = "0 6 * * *" # at 6AM
+  autoscaling_group_name = aws_autoscaling_group.web_server.name
 }
 
 # *** the autoscaling attachment
@@ -248,6 +323,7 @@ resource "aws_alb_target_group" "web_server" { # OK
     path                = "/index.html"
     interval            = 30
     timeout             = 5
+    protocol            = "HTTPS"
     healthy_threshold   = 2
     unhealthy_threshold = 2 # if 2 for 30
   }
@@ -258,38 +334,85 @@ resource "aws_alb_target_group" "web_server" { # OK
 
 # *** the placement group and launch template
 
-resource "aws_placement_group" "web_server_asg_spread_placement_group" {
+resource "aws_placement_group" "web_server_asg_spread_placement_group" { # OK
   name     = "web_server_asg_spread_placement_group"
   strategy = "spread"
 }
 
-# *** the ingress rules for the elb
+# *** the ingress/egress for the load balancer
 
-resource "aws_security_group" "https_ingress_only_from_cloudfront" {
-  name        = "https_ingress_only_from_cloudfront"
-  description = "Allow only HTTPS ingress"
+resource "aws_security_group" "https_ingress_only_from_cloudfront_egress_all" { # OK
+  name        = "https_ingress_only_from_cloudfront_egress_all"
+  description = "Allow only from cloudfront and egress all"
   vpc_id      = var.web_server_vpc_id
+  # lifecycle {
+  #   create_before_destroy = true
+  # }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_cloudfront" {
-  security_group_id = aws_security_group.https_ingress_only_from_cloudfront.id
+resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_cloudfront" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_cloudfront_egress_all.id
+  description       = "Allow HTTPS only from cloudfront egress all"
+  from_port         = 443
+  ip_protocol       = "tcp"
+  to_port           = 443
+  prefix_list_id    = "pl-3b927c52"
+}
 
-  from_port      = 443
-  ip_protocol    = "tcp"
-  to_port        = 443
-  prefix_list_id = "pl-fab65393"
+resource "aws_vpc_security_group_egress_rule" "egress_all" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_cloudfront_egress_all.id
+  description       = "Allow egress all"
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
+}
+
+# *** the ingress/egress for the private instances
+
+resource "aws_security_group" "https_ingress_only_from_public_subnets_egress_all" { # OK
+  name        = "https_ingress_only_from_public_subnets_egress_all"
+  description = "Allow only HTTPS ingress from public subnets egress all"
+  vpc_id      = var.web_server_vpc_id
+  # lifecycle {
+  #   create_before_destroy = true
+  # }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_public_subnet_1" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_public_subnets_egress_all.id
+  description       = "Allow HTTPS only from public subnet 1"
+  from_port         = 443
+  ip_protocol       = "tcp"
+  to_port           = 443
+  cidr_ipv4         = "10.0.0.0/24"
+
+}
+
+resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_private_subnet" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_public_subnets_egress_all.id
+  description       = "Allow HTTPS only from private subnet itself"
+  from_port         = 443
+  ip_protocol       = "tcp"
+  to_port           = 443
+  cidr_ipv4         = "10.0.1.0/24"
+}
+
+# NOTE: this is required for ssm to work
+resource "aws_vpc_security_group_egress_rule" "egress_all_2" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_public_subnets_egress_all.id
+  description       = "Allow egress all"
+  ip_protocol       = "-1"
+  cidr_ipv4         = "0.0.0.0/0"
 }
 
 # *** the launch template for autoscaling group
 
-resource "aws_launch_template" "web_server" {
+resource "aws_launch_template" "web_server" { # OK
   name = "web_server"
 
   block_device_mappings {
     device_name = "/dev/sdf"
 
     ebs {
-      # TODO: snapshotting
       volume_size = 20
       encrypted   = true
       kms_key_id  = var.adminaccount_web_key_id
@@ -324,19 +447,17 @@ resource "aws_launch_template" "web_server" {
   network_interfaces {
     associate_public_ip_address = false # private hosts
     subnet_id                   = var.web_server_instances_private_subnet_id
-    # TODO: network_interfaces.security_groups vs vpc_security_group_ids
-    security_groups = [aws_security_group.https_ingress_only_from_cloudfront.id]
+    security_groups             = [aws_security_group.https_ingress_only_from_public_subnets_egress_all.id]
   }
 
   placement {
-    availability_zone = "us-east-1a"
-    group_name        = "web_server_asg_spread_placement_group"
+    group_name = "web_server_asg_spread_placement_group"
   }
 
   tag_specifications {
-    resource_type = "instance"
+    resource_type = "volume"
     tags = {
-      component = "web"
+      Snapshot = "true" # do snapshot
     }
   }
 
@@ -345,7 +466,7 @@ resource "aws_launch_template" "web_server" {
 
 # *** scaling policy for the auto-scaling group
 
-resource "aws_autoscaling_policy" "web_server_scale_down" {
+resource "aws_autoscaling_policy" "web_server_scale_down" { # OK
   name                   = "web_server_scale_down"
   autoscaling_group_name = aws_autoscaling_group.web_server.name
   adjustment_type        = "ChangeInCapacity"
@@ -354,7 +475,7 @@ resource "aws_autoscaling_policy" "web_server_scale_down" {
 }
 
 
-resource "aws_autoscaling_policy" "web_server_scale_up" {
+resource "aws_autoscaling_policy" "web_server_scale_up" { # OK
   name                   = "web_server_scale_up"
   autoscaling_group_name = aws_autoscaling_group.web_server.name
   adjustment_type        = "ChangeInCapacity"
@@ -363,7 +484,7 @@ resource "aws_autoscaling_policy" "web_server_scale_up" {
 }
 
 
-resource "aws_cloudwatch_metric_alarm" "web_server_scale_down" {
+resource "aws_cloudwatch_metric_alarm" "web_server_scale_down" { # OK
   alarm_description   = "Monitors CPU utilization for Terramino ASG"
   alarm_actions       = [aws_autoscaling_policy.web_server_scale_down.arn]
   alarm_name          = "web_server_scale_down"
@@ -381,7 +502,7 @@ resource "aws_cloudwatch_metric_alarm" "web_server_scale_down" {
   }
 }
 
-resource "aws_cloudwatch_metric_alarm" "web_server_scale_up" {
+resource "aws_cloudwatch_metric_alarm" "web_server_scale_up" { # OK
   alarm_description   = "Monitors CPU utilization for Terramino ASG"
   alarm_actions       = [aws_autoscaling_policy.web_server_scale_up.arn]
   alarm_name          = "web_server_scale_up"
@@ -403,58 +524,436 @@ resource "aws_cloudwatch_metric_alarm" "web_server_scale_up" {
 
 # **** web acl
 
-# *** the kinesis data firehose stream and configuration for the web acl
+# ***** the necessary buckets and bucket configs for the web acl
 
-# requires non-free account
-# resource "aws_kinesis_firehose_delivery_stream" "web_server_alb" {
-#   name        = "web_server_alb"
-#   destination = "extended_s3"
+resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-web_server_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.bucket
 
-#   extended_s3_configuration {
-#     role_arn   = aws_iam_role.web_server_alb_firehose_role.arn
-#     bucket_arn = var.log_bucket_arn
-#   }
+  rule {
+    id = "rule-1"
 
-#   server_side_encryption {
-#     enabled  = true
-#     key_type = "CUSTOMER_MANAGED_CMK"
-#     key_arn  = var.kinesis_firehose_enc_key_arn
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
 
-#   }
-# }
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA" # by default
+    }
 
-# data "aws_iam_policy_document" "web_server_alb_firehose_assume_role" {
-#   statement {
-#     effect = "Allow"
+    transition {
+      days          = 60 # after 30 days use glacier
+      storage_class = "GLACIER"
+      # ... other transition/expiration actions ...
+    }
+    transition {
+      days          = 150 # after 30 days use glacier
+      storage_class = "DEEP_ARCHIVE"
+      # ... other transition/expiration actions ...
+    }
+    status = "Enabled"
+  }
+}
 
-#     principals {
-#       type        = "Service"
-#       identifiers = ["firehose.amazonaws.com"]
-#     }
+resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-web_server_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.bucket
 
-#     actions = ["sts:AssumeRole"]
-#   }
-# }
+  rule {
+    id = "rule-1"
 
-# resource "aws_iam_role" "web_server_alb_firehose_role" {
-#   name               = "firehose_test_role"
-#   assume_role_policy = data.aws_iam_policy_document.web_server_alb_firehose_assume_role.json
-# }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
 
-# resource "aws_wafv2_web_acl_logging_configuration" "example" {
-#   log_destination_configs = [aws_kinesis_firehose_delivery_stream.web_server_alb.arn]
-#   resource_arn            = aws_wafv2_web_acl.web_server_alb_allow_cloudfront_only.arn
-#   redacted_fields {
-#     single_header {
-#       name = "user-agent"
-#     }
-#   }
-# }
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA" # by default
+    }
+
+    transition {
+      days          = 60 # after 30 days use glacier
+      storage_class = "GLACIER"
+      # ... other transition/expiration actions ...
+    }
+    transition {
+      days          = 150 # after 30 days use glacier
+      storage_class = "DEEP_ARCHIVE"
+      # ... other transition/expiration actions ...
+    }
+    status = "Enabled"
+  }
+}
+
+# *** the public access blocks
+resource "aws_s3_bucket_public_access_block" "aws-waf-logs-web_server_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.id
+
+  block_public_acls       = true # block any acls that would make it public
+  block_public_policy     = true # block any policies that would make it public
+  ignore_public_acls      = true # ignore current public policies
+  restrict_public_buckets = true # only aws services and owner can access if pub
+}
+
+resource "aws_s3_bucket_public_access_block" "aws-waf-logs-web_server_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.id
+
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+# *** the bucket versionings
+resource "aws_s3_bucket_versioning" "aws-waf-logs-web_server_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.id
+  # mfa    = "serialnumber authvalue"
+  versioning_configuration {
+    status = "Enabled"
+    # mfa_delete = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_versioning" "aws-waf-logs-web_server_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.id
+  # mfa    = "serialnumber authvalue"
+  versioning_configuration {
+    status = "Enabled"
+    # mfa_delete = "Enabled"
+  }
+}
+
+# *** the access logging in same bucket
+# **** the access logging settings themselves
+resource "aws_s3_bucket_logging" "aws-waf-logs-web_server_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.bucket
+
+  target_bucket = var.log_bucket_bucket
+  target_prefix = "bucket-logging-log/"
+  target_object_key_format {
+    partitioned_prefix {
+      partition_date_source = "EventTime"
+    }
+  }
+}
+
+resource "aws_s3_bucket_logging" "aws-waf-logs-web_server_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.bucket
+
+  target_bucket = var.log_bucket_bucket
+  target_prefix = "bucket-logging-log/"
+  target_object_key_format {
+    partitioned_prefix {
+      partition_date_source = "EventTime"
+    }
+  }
+}
+
+# *** the sse-cs
+resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-web_server_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = var.adminaccount_web_key_arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-web_server_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = var.adminaccount_web_key_arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+# *** the policies for replication
+data "aws_iam_policy_document" "aws-waf-logs-web_server_replication_assume_role" { # OK
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+resource "aws_iam_role" "aws-waf-logs-web_server_replication" { # OK
+  name               = "aws-waf-logs-web_server_replication"
+  assume_role_policy = data.aws_iam_policy_document.aws-waf-logs-web_server_replication_assume_role.json
+}
+
+data "aws_iam_policy_document" "aws-waf-logs-web_server_replication_listing" { # OK
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:GetReplicationConfiguration",
+      "s3:ListBucket",
+    ]
+
+    resources = [aws_s3_bucket.aws-waf-logs-web_server_source.arn]
+  }
+
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:GetObjectVersionForReplication",
+      "s3:GetObjectVersionAcl",
+      "s3:GetObjectVersionTagging",
+    ]
+
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_source.arn}/*"]
+  }
+
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "s3:ReplicateObject",
+      "s3:ReplicateDelete",
+      "s3:ReplicateTags",
+    ]
+
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_destination.arn}/*"]
+  }
+}
+
+resource "aws_iam_policy" "aws-waf-logs-web_server_replication" { # OK
+  name   = "aws-waf-web_server_replication"
+  policy = data.aws_iam_policy_document.aws-waf-logs-web_server_replication_listing.json
+}
+
+resource "aws_iam_role_policy_attachment" "aws-waf-logs-web_server_replication" { # OK
+  role       = aws_iam_role.aws-waf-logs-web_server_replication.name
+  policy_arn = aws_iam_policy.aws-waf-logs-web_server_replication.arn
+}
+
+# *** the actual bucket replication configuration
+resource "aws_s3_bucket_replication_configuration" "aws-waf-logs-web_server_replication" { # OK
+
+  # Must have bucket versioning enabled first
+  depends_on = [aws_s3_bucket_versioning.aws-waf-logs-web_server_source]
+
+  role   = aws_iam_role.aws-waf-logs-web_server_replication.arn
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.id
+
+  rule {
+    id = "all"
+    # Replication configuration XML V2 includes the Filter element for rules.
+    # If you specify a rule with an empty filter tag your rule will apply to all
+    # objects in your bucket
+    filter {
+      prefix = "" # all?
+    }
+    delete_marker_replication {
+      status = "Enabled"
+    }
+    status = "Enabled"
+
+    destination {
+      bucket        = aws_s3_bucket.aws-waf-logs-web_server_destination.arn
+      storage_class = "STANDARD_IA"
+      # enable RTC
+      replication_time {
+        status = "Enabled"
+        time {
+          minutes = 15
+        }
+      }
+      # for rtc
+      metrics {
+        event_threshold {
+          minutes = 15
+        }
+        status = "Enabled"
+      }
+      encryption_configuration {
+        replica_kms_key_id = var.adminaccount_web_key_arn
+      }
+    }
+    source_selection_criteria {
+      sse_kms_encrypted_objects {
+        status = "Enabled"
+      }
+    }
+  }
+}
+
+# ** the buckets itself and policy
+
+resource "aws_s3_bucket" "aws-waf-logs-web_server_source" { # OK
+  bucket        = "aws-waf-logs-web-server-source-1"
+  force_destroy = true
+}
+
+resource "aws_s3_bucket" "aws-waf-logs-web_server_destination" { # OK
+  bucket        = "aws-waf-logs-web-server-destination-1"
+  force_destroy = true
+}
+
+# *** the policy document as recommended by AWS
+
+data "aws_iam_policy_document" "aws-waf-logs-web_server_source" { # OK
+  statement {
+    sid       = "AWSLogDeliveryWrite"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_source.arn}/*"]
+    actions   = ["s3:PutObject"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:${data.aws_region.current.name}:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "AWSLogDeliveryAclCheck"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_source.arn}"]
+    actions   = ["s3:GetBucketAcl"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:us-east-2:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+  # for bucket logging
+  statement {
+    principals {
+      identifiers = ["logging.s3.amazonaws.com"]
+      type        = "Service"
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_source.arn}/bucket-logging-log/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "aws-waf-logs-web_server_destination" { # OK
+  statement {
+    sid       = "AWSLogDeliveryWrite"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_destination.arn}/*"]
+    actions   = ["s3:PutObject"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:${data.aws_region.current.name}:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "AWSLogDeliveryAclCheck"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_destination.arn}"]
+    actions   = ["s3:GetBucketAcl"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:us-east-2:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+  # for bucket logging
+  statement {
+    principals {
+      identifiers = ["logging.s3.amazonaws.com"]
+      type        = "Service"
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_destination.arn}/bucket-logging-log/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "aws-waf-logs-web_server_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_source.bucket
+  policy = data.aws_iam_policy_document.aws-waf-logs-web_server_source.json
+}
+
+resource "aws_s3_bucket_policy" "aws-waf-logs-web_server_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.bucket
+  policy = data.aws_iam_policy_document.aws-waf-logs-web_server_destination.json
+}
 
 # ***** the web acl as container of rule groups (against log4j)
+
 # Web ACL must use lifecycle.ignore_changes to prevent drift from this resource
-# TODO: allow me rule also? what ?
-resource "aws_wafv2_web_acl" "web_server_alb_allow_cloudfront_only" {
+resource "aws_wafv2_web_acl" "web_server_alb_allow_cloudfront_only" { # OK
   name  = "web_server_alb_allow_cloudfront_only"
   scope = "REGIONAL"
   default_action {
@@ -528,6 +1027,13 @@ resource "aws_wafv2_web_acl" "web_server_alb_allow_cloudfront_only" {
   lifecycle {
     ignore_changes = [rule]
   }
+}
+
+# ***** the logging and bucket
+
+resource "aws_wafv2_web_acl_logging_configuration" "aws-waf-logs-web_server" {
+  log_destination_configs = [aws_s3_bucket.aws-waf-logs-web_server_source.arn]
+  resource_arn            = aws_wafv2_web_acl.web_server_alb_allow_cloudfront_only.arn
 }
 
 # ***** the association with the load balancer

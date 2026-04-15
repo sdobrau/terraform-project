@@ -1,6 +1,6 @@
 module "tardigrade-ssm-default-host-management" {
-  source = "git::https://github.com/plus3it/terraform-aws-tardigrade-ssm-default-host-management.git?ref=d557d50"
-  version = "2.0.0"
+  source = "https://github.com/plus3it/terraform-aws-tardigrade-ssm-default-host-management.git?ref=33138229e4cd3159f3959c372c28ad375bb5bfe7"
+
 }
 
 # This enables host management for EC2 instances via SSM and SSM auto-update

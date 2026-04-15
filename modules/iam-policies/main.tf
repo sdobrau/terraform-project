@@ -5,77 +5,100 @@
 # 'terraform' role can be assumed when running terraform with
 # "adminaccount" credentials
 
-resource "aws_iam_role" "terraform" {
-  name               = "terraform"
-  assume_role_policy = data.aws_iam_policy_document.terraform.json
-}
+# ** web server allow put to web_server_logs
 
-resource "aws_iam_role_policy_attachment" "terraform" {
-  role       = aws_iam_role.terraform.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}
-
-# i can assume
-data "aws_iam_policy_document" "terraform" {
+data "aws_iam_policy_document" "web_server_write_to_web_s3_bucket_and_ssm_and_cloudwatch" { # OK
+  # for logging main logs
   statement {
-    actions = [
-      "sts:AssumeRole",
-      "sts:TagSession",
-      "sts:SetSourceIdentity"
-    ]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:user/adminaccount"]
-    }
+    sid       = "AllowInMainLogs"
+    effect    = "Allow"
+    resources = ["arn:aws:s3:::web-server-logs-source/main_logs/*"]
+    actions   = ["s3:PutObject"]
   }
 
-}
+  # checkov:skip=CKV_AWS_111:TOREVIEW free access
+  # checkov:skip=CKV_AWS_356:TOREVIEW free access
+  # checkov:skip=CKV_AWS_108:SSM policy: instances are behind NAT
+  # for
+  # TOREVIEW
+  statement {
+    effect    = "Allow"
+    resources = ["*"]
 
-# TODO: s3 write
-resource "aws_iam_policy" "web_server_write_to_web_s3_bucket" {
-  name = "web_server_write_to_web_s3_bucket"
-
-  policy = jsonencode({
-    "Version" : "2012-10-17",
-    "Statement" : [
-      {
-        "Sid" : "al",
-        "Effect" : "Allow",
-        "Action" : [
-          "s3:PutObject"
-        ],
-        "Resource" : "arn:aws:s3:::web_server_logs/main_logs"
-      },
+    actions = [
+      "ssm:DescribeAssociation",
+      "ssm:GetDeployablePatchSnapshotForInstance",
+      "ssm:GetDocument",
+      "ssm:DescribeDocument",
+      "ssm:GetManifest",
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:ListAssociations",
+      "ssm:ListInstanceAssociations",
+      "ssm:PutInventory",
+      "ssm:PutComplianceItems",
+      "ssm:PutConfigurePackageResult",
+      "ssm:UpdateAssociationStatus",
+      "ssm:UpdateInstanceAssociationStatus",
+      "ssm:UpdateInstanceInformation",
     ]
-  })
-}
+  }
 
-resource "aws_iam_role" "web_server" {
-  name = "web_server"
+  statement {
+    effect    = "Allow"
+    resources = ["*"]
 
-  # Terraform's "jsonencode" function converts a
-  # Terraform expression result to valid JSON syntax.
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Sid    = "a"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      },
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
     ]
-  })
+  }
+
+  statement {
+    effect    = "Allow"
+    resources = ["*"]
+
+    actions = [
+      "ec2messages:AcknowledgeMessage",
+      "ec2messages:DeleteMessage",
+      "ec2messages:FailMessage",
+      "ec2messages:GetEndpoint",
+      "ec2messages:GetMessages",
+      "ec2messages:SendReply",
+    ]
+  }
 }
 
-resource "aws_iam_role_policy_attachment" "web_server" {
-  role       = resource.aws_iam_role.web_server.name
-  policy_arn = resource.aws_iam_policy.web_server_write_to_web_s3_bucket.arn
+data "aws_iam_policy_document" "web_server" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type = "Service"
+
+      identifiers = [
+        "ec2.amazonaws.com",
+        "ssm.amazonaws.com",
+      ]
+    }
+  }
 }
 
-resource "aws_iam_instance_profile" "web_server" {
+resource "aws_iam_role" "web_server" { # OK
+  name               = "web_server"
+  assume_role_policy = data.aws_iam_policy_document.web_server.json
+}
+
+resource "aws_iam_role_policy" "web_server" { # OK
+  name   = "web_server"
+  role   = aws_iam_role.web_server.id
+  policy = data.aws_iam_policy_document.web_server_write_to_web_s3_bucket_and_ssm_and_cloudwatch.json
+}
+
+resource "aws_iam_instance_profile" "web_server" { # OK
   name = "web_server"
   role = aws_iam_role.web_server.name
 }

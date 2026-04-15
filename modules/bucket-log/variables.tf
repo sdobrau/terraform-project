@@ -1,14 +1,14 @@
-variable "adminaccount_web_key_id" {
-  description = "Web key ID of the adminaccount key"
+variable "aws_source_account_id" {
+  description = "ID of source account"
   type        = string
 }
 
 variable "adminaccount_web_key_arn" {
-  description = "Web key ARN of the adminaccount key"
+  description = "ARN of adminaccount_web key"
   type        = string
 }
 
-variable "aws_source_account_id" {
-  description = "Source account ID"
+variable "adminaccount_web_key_id" {
+  description = "ID of adminaccount_web key"
   type        = string
 }

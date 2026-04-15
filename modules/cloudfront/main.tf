@@ -1,28 +1,26 @@
-# * the access logging settings (save as parquet to log-bucket)
+# * standard logging v2 for cloudfront distribution
+data "aws_region" "current" {
+  provider = aws
+}
 
-# TODO (why?) does this need to be in us-east-1?
-resource "aws_cloudwatch_log_delivery_source" "cloudfront" {
-  #region = "us-east-1"
-
-  name         = "cloudfront"
+resource "aws_cloudwatch_log_delivery_source" "cloudfront" { # OK
+  name = "cloudfront"
+  #checkov:skip=CKV_AWS_86:Access logging is configured for Cloudfront w/ CloudWatch
   log_type     = "ACCESS_LOGS"
   resource_arn = aws_cloudfront_distribution.cloudfront.arn
 }
 
-resource "aws_cloudwatch_log_delivery_destination" "cloudfront" {
-  #region = "us-east-1"
-
+resource "aws_cloudwatch_log_delivery_destination" "cloudfront" { # OK
   name          = "cloudfront"
   output_format = "parquet"
 
+  delivery_destination_type = "S3"
   delivery_destination_configuration {
     destination_resource_arn = var.log_bucket_arn
   }
 }
 
-resource "aws_cloudwatch_log_delivery" "example" {
-  #region = "us-east-1"
-
+resource "aws_cloudwatch_log_delivery" "cloudfront" { # TODO: test
   delivery_source_name     = aws_cloudwatch_log_delivery_source.cloudfront.name
   delivery_destination_arn = aws_cloudwatch_log_delivery_destination.cloudfront.arn
 
@@ -32,44 +30,114 @@ resource "aws_cloudwatch_log_delivery" "example" {
   }
 }
 
-# * The bucket(enc+repl) and policy for logging cloudfront Web ACL TODO:
+# * The bucket(enc+repl) and policy for logging cloudfront Web ACL
 # ** the lifecycle configuration, access logging, versioning, public access blocking, encryption and replication config
 # *** the event notification sns topics with encryption for both buckets
-resource "aws_sns_topic" "aws-waf-logs-cloudfront_source_bucket_notification" {
+
+resource "aws_sns_topic" "aws-waf-logs-cloudfront_source_bucket_notification" { # OK
   name              = "aws-waf-logs-cloudfront_source_bucket_notification"
   kms_master_key_id = var.adminaccount_web_key_id
 }
 
-resource "aws_sns_topic" "aws-waf-logs-cloudfront_destination_bucket_notification" {
+resource "aws_sns_topic" "aws-waf-logs-cloudfront_destination_bucket_notification" { # OK
   name              = "aws-waf-logs-cloudfront_destination_bucket_notification"
-  kms_master_key_id = var.adminaccount_web_key_id # encryption
+  kms_master_key_id = var.adminaccount_web_key_id
+}
+
+# # *** the policy to use as a resource policy in sns topics
+
+data "aws_iam_policy_document" "aws-waf-logs-cloudfront_source_bucket_notification_s3_to_sns" { # OK
+
+  statement {
+    sid       = "Example SNS topic policy"
+    effect    = "Allow"
+    resources = ["${aws_sns_topic.aws-waf-logs-cloudfront_source_bucket_notification.arn}"]
+    actions   = ["SNS:Publish"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "aws-waf-logs-cloudfront_destination_bucket_notification_s3_to_sns" { # OK
+
+  statement {
+    sid       = "Example SNS topic policy"
+    effect    = "Allow"
+    resources = ["${aws_sns_topic.aws-waf-logs-cloudfront_destination_bucket_notification.arn}"]
+    actions   = ["SNS:Publish"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["s3.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_sns_topic_policy" "aws-waf-logs-cloudfront_source_bucket_notification" { # OK
+  arn    = aws_sns_topic.aws-waf-logs-cloudfront_source_bucket_notification.arn
+  policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_source_bucket_notification_s3_to_sns.json
+}
+
+resource "aws_sns_topic_policy" "aws-waf-logs-cloudfront_destination_bucket_notification" { # OK
+  arn    = aws_sns_topic.aws-waf-logs-cloudfront_destination_bucket_notification.arn
+  policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_destination_bucket_notification_s3_to_sns.json
 }
 
 # *** the bucket notification settings: send to sns topics
-resource "aws_s3_bucket_notification" "aws-waf-logs-cloudfront_source_bucket_notification" {
-  bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.id
+
+resource "aws_s3_bucket_notification" "aws-waf-logs-cloudfront_source_bucket_notification" { # OK
+  depends_on = [aws_sns_topic.aws-waf-logs-cloudfront_source_bucket_notification]
+  bucket     = aws_s3_bucket.aws-waf-logs-cloudfront_source.bucket
 
   topic {
     topic_arn = aws_sns_topic.aws-waf-logs-cloudfront_source_bucket_notification.arn
     events    = ["s3:ObjectCreated:*"]
     # log sent by instance
-    filter_prefix = "*" # TODO: right dir? main_log
+    filter_prefix = "main_log/*"
   }
 }
 
-resource "aws_s3_bucket_notification" "aws-waf-logs-cloudfront_destination_bucket_notification" {
-  bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.id
+resource "aws_s3_bucket_notification" "aws-waf-logs-cloudfront_destination_bucket_notification" { # OK
+  depends_on = [aws_sns_topic.aws-waf-logs-cloudfront_destination_bucket_notification]
+  bucket     = aws_s3_bucket.aws-waf-logs-cloudfront_destination.bucket
 
   topic {
     topic_arn = aws_sns_topic.aws-waf-logs-cloudfront_destination_bucket_notification.arn
     events    = ["s3:ObjectCreated:*"]
-    # when replication done ? TODO
-    filter_prefix = "*" # TODO: right dir? main_log
+    # when replication done ?
+    filter_prefix = "main_log/*"
   }
 }
 
 # *** the lifecycle configurations
-resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_source" {
+resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_source" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.bucket
 
   rule {
@@ -80,17 +148,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_source
     }
 
     transition {
-      days          = 0
+      days          = 30
       storage_class = "STANDARD_IA" # by default
     }
 
     transition {
-      days          = 30 # after 30 days use glacier
+      days          = 60 # after 30 days use glacier
       storage_class = "GLACIER"
       # ... other transition/expiration actions ...
     }
     transition {
-      days          = 60 # after 30 days use glacier
+      days          = 150 # after 30 days use glacier
       storage_class = "DEEP_ARCHIVE"
       # ... other transition/expiration actions ...
     }
@@ -98,7 +166,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_source
   }
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_destination" {
+resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_destination" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.bucket
 
   rule {
@@ -109,17 +177,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_destin
     }
 
     transition {
-      days          = 0
+      days          = 30
       storage_class = "STANDARD_IA" # by default
     }
 
     transition {
-      days          = 30 # after 30 days use glacier
+      days          = 60 # after 30 days use glacier
       storage_class = "GLACIER"
       # ... other transition/expiration actions ...
     }
     transition {
-      days          = 60 # after 30 days use glacier
+      days          = 150 # after 30 days use glacier
       storage_class = "DEEP_ARCHIVE"
       # ... other transition/expiration actions ...
     }
@@ -128,7 +196,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "aws-waf-logs-cloudfront_destin
 }
 
 # *** the public access blocks
-resource "aws_s3_bucket_public_access_block" "aws-waf-logs-cloudfront_source" {
+resource "aws_s3_bucket_public_access_block" "aws-waf-logs-cloudfront_source" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.id
 
   block_public_acls       = true # block any acls that would make it public
@@ -137,7 +205,7 @@ resource "aws_s3_bucket_public_access_block" "aws-waf-logs-cloudfront_source" {
   restrict_public_buckets = true # only aws services and owner can access if pub
 }
 
-resource "aws_s3_bucket_public_access_block" "aws-waf-logs-cloudfront_destination" {
+resource "aws_s3_bucket_public_access_block" "aws-waf-logs-cloudfront_destination" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.id
 
   block_public_acls       = true
@@ -147,68 +215,27 @@ resource "aws_s3_bucket_public_access_block" "aws-waf-logs-cloudfront_destinatio
 }
 
 # *** the bucket versionings
-resource "aws_s3_bucket_versioning" "aws-waf-logs-cloudfront_source" {
+resource "aws_s3_bucket_versioning" "aws-waf-logs-cloudfront_source" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.id
+  # mfa    = "serialnumber authvalue"
   versioning_configuration {
     status = "Enabled"
+    # mfa_delete = "Enabled"
   }
 }
 
-resource "aws_s3_bucket_versioning" "aws-waf-logs-cloudfront_destination" {
+resource "aws_s3_bucket_versioning" "aws-waf-logs-cloudfront_destination" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.id
+  # mfa    = "serialnumber authvalue"
   versioning_configuration {
     status = "Enabled"
+    # mfa_delete = "Enabled"
   }
 }
 
 # *** the access logging in same bucket
-# **** the iam permissions required for access logging to work
-data "aws_iam_policy_document" "aws-waf-logs-cloudfront_source_logging" {
-  statement {
-    principals {
-      identifiers = ["logging.s3.amazonaws.com"]
-      type        = "Service"
-    }
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}/bucket-logging-log/*"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [var.aws_source_account_id]
-    }
-  }
-}
-
-# TODO: bucket logging for both bucket and state buckets to logging bucket
-resource "aws_s3_bucket_policy" "aws-waf-logs-cloudfront_source" {
-  bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.bucket
-  policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_source_logging.json
-}
-
-data "aws_iam_policy_document" "aws-waf-logs-cloudfront_destination_logging" {
-  statement {
-    principals {
-      identifiers = ["logging.s3.amazonaws.com"]
-      type        = "Service"
-    }
-    actions   = ["s3:PutObject"]
-    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}/bucket-logging-log/*"]
-    condition {
-      test     = "StringEquals"
-      variable = "aws:SourceAccount"
-      values   = [var.aws_source_account_id]
-    }
-  }
-}
-
-# TODO: bucket logging for both bucket and state buckets to logging bucket
-resource "aws_s3_bucket_policy" "aws-waf-logs-cloudfront_destination" {
-  bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.bucket
-  policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_destination_logging.json
-}
-
 # **** the access logging settings themselves
-resource "aws_s3_bucket_logging" "aws-waf-logs-cloudfront_source" {
+resource "aws_s3_bucket_logging" "aws-waf-logs-cloudfront_source" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.bucket
 
   target_bucket = var.log_bucket_bucket
@@ -220,7 +247,7 @@ resource "aws_s3_bucket_logging" "aws-waf-logs-cloudfront_source" {
   }
 }
 
-resource "aws_s3_bucket_logging" "aws-waf-logs-cloudfront_destination" {
+resource "aws_s3_bucket_logging" "aws-waf-logs-cloudfront_destination" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.bucket
 
   target_bucket = var.log_bucket_bucket
@@ -233,28 +260,28 @@ resource "aws_s3_bucket_logging" "aws-waf-logs-cloudfront_destination" {
 }
 
 # *** the sse-cs
-resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-cloudfront_source" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-cloudfront_source" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.id
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_id
+      kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
   }
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-cloudfront_destination" {
+resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-cloudfront_destination" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.id
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_id
+      kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
   }
 }
 
 # *** the policies for replication
-data "aws_iam_policy_document" "aws-waf-logs-cloudfront_replication_assume_role" {
+data "aws_iam_policy_document" "aws-waf-logs-cloudfront_replication_assume_role" { # OK
   statement {
     effect = "Allow"
 
@@ -267,12 +294,12 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_replication_assume_role"
   }
 }
 
-resource "aws_iam_role" "aws-waf-logs-cloudfront_replication" {
-  name               = "web_server_logs_replication"
+resource "aws_iam_role" "aws-waf-logs-cloudfront_replication" { # OK
+  name               = "aws-waf-logs-cloudfront_replication"
   assume_role_policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_replication_assume_role.json
 }
 
-data "aws_iam_policy_document" "aws-waf-logs-cloudfront_replication_listing" {
+data "aws_iam_policy_document" "aws-waf-logs-cloudfront_replication_listing" { # OK
   statement {
     effect = "Allow"
 
@@ -309,7 +336,7 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_replication_listing" {
   }
 }
 
-resource "aws_iam_policy" "aws-waf-logs-cloudfront_replication" {
+resource "aws_iam_policy" "aws-waf-logs-cloudfront_replication" { # OK
   name   = "aws-waf-cloudfront_replication"
   policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_replication_listing.json
 }
@@ -320,8 +347,7 @@ resource "aws_iam_role_policy_attachment" "aws-waf-logs-cloudfront_replication" 
 }
 
 # *** the actual bucket replication configuration
-resource "aws_s3_bucket_replication_configuration" "aws-waf-logs-cloudfront_replication" {
-  region = "eu-north-1"
+resource "aws_s3_bucket_replication_configuration" "aws-waf-logs-cloudfront_replication" { # OK
 
   # Must have bucket versioning enabled first
   depends_on = [aws_s3_bucket_versioning.aws-waf-logs-cloudfront_source]
@@ -331,80 +357,212 @@ resource "aws_s3_bucket_replication_configuration" "aws-waf-logs-cloudfront_repl
 
   rule {
     id = "all"
-
-    # replicate everything
-    # filter {
-    #   prefix = "example"
-    # }
-
+    # Replication configuration XML V2 includes the Filter element for rules.
+    # If you specify a rule with an empty filter tag your rule will apply to all
+    # objects in your bucket
+    filter {
+      prefix = "" # all?
+    }
+    delete_marker_replication {
+      status = "Enabled"
+    }
     status = "Enabled"
 
     destination {
       bucket        = aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn
       storage_class = "STANDARD_IA"
+      # enable RTC
+      replication_time {
+        status = "Enabled"
+        time {
+          minutes = 15
+        }
+      }
+      # for rtc
+      metrics {
+        event_threshold {
+          minutes = 15
+        }
+        status = "Enabled"
+      }
+      encryption_configuration {
+        replica_kms_key_id = var.adminaccount_web_key_arn
+      }
+    }
+    source_selection_criteria {
+      sse_kms_encrypted_objects {
+        status = "Enabled"
+      }
     }
   }
 }
 
 # ** the bucket itself and policy
-resource "aws_s3_bucket" "aws-waf-logs-cloudfront_source" {
-  bucket = "aws-waf-logs-cloudfront"
+
+resource "aws_s3_bucket" "aws-waf-logs-cloudfront_source" { # OK
+  bucket        = "aws-waf-logs-cloudfront-source-1"
+  force_destroy = true
 }
 
-resource "aws_s3_bucket" "aws-waf-logs-cloudfront_destination" {
-  bucket = "aws-waf-logs-cloudfront"
+resource "aws_s3_bucket" "aws-waf-logs-cloudfront_destination" { # OK
+  bucket        = "aws-waf-logs-cloudfront-destination-1"
+  force_destroy = true
 }
 
-# # TODO: debug bucket policies
-# resource "aws_s3_bucket_policy" "aws-waf-logs-cloudfront_source" {
-#   bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.id
+# *** the policy document as recommended by AWS
 
-# policy = jsonencode({
-#   Version = "2012-10-17"
-#   Id      = "AWSLogDeliveryWrite20150319"
-#   Statement = [
-#     {
-#       Sid    = "AWSLogDeliveryAclCheck"
-#       Effect = "Allow"
-#       Principal = {
-#         Service = "delivery.logs.amazonaws.com" # WAF logging
-#       }
-#       Action   = "s3:GetBucketAcl" # to verify if can write logs
-#       Resource = aws_s3_bucket.aws-waf-logs-cloudfront_source.arn
-#       Condition = {
-#         StringEquals = {
-#           "aws:SourceAccount" = [var.aws_source_account_id]
-#         }
-#         ArnLike = {
-#           "aws:SourceArn" = "arn:aws:logs:${data.aws_region.current.name}:${var.aws_source_account_id}:*"
-#         }
-#       }
-#     },
-#     {
-#       Sid    = "AWSLogDeliveryWrite"
-#       Effect = "Allow"
-#       Principal = {
-#         Service = "delivery.logs.amazonaws.com" # WAF logging
-#       }
-#       Action   = "s3:PutObject" # can put object
-#       Resource = "${aws_s3_bucket.waf_logs.arn}/*"
-#       Condition = {
-#         StringEquals = {
-#           "s3:x-amz-acl"      = "bucket-owner-full-control"
-#           "aws:SourceAccount" = [var.aws_source_account_id]
-#         }
-#         ArnLike = {
-#           "aws:SourceArn" = "arn:aws:logs:${data.aws_region.current.name}:${var.aws_source_account_id}:*"
-#         }
-#       }
-#     }
-#   ]
-# })
-# }
+data "aws_iam_policy_document" "aws-waf-logs-cloudfront_source" { # OK
+  statement {
+    sid       = "AWSLogDeliveryWrite"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}/*"]
+    actions   = ["s3:PutObject"]
 
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:${data.aws_region.current.name}:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "AWSLogDeliveryAclCheck"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}"]
+    actions   = ["s3:GetBucketAcl"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:us-east-2:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+  # for bucket logging
+  statement {
+    principals {
+      identifiers = ["logging.s3.amazonaws.com"]
+      type        = "Service"
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}/bucket-logging-log/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "aws-waf-logs-cloudfront_destination" { # OK
+  statement {
+    sid       = "AWSLogDeliveryWrite"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}/*"]
+    actions   = ["s3:PutObject"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:${data.aws_region.current.name}:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+
+  statement {
+    sid       = "AWSLogDeliveryAclCheck"
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}"]
+    actions   = ["s3:GetBucketAcl"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = ["${var.aws_source_account_id}"]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:logs:us-east-2:${var.aws_source_account_id}:*"]
+    }
+
+    principals {
+      type        = "Service"
+      identifiers = ["delivery.logs.amazonaws.com"]
+    }
+  }
+  # for bucket logging
+  statement {
+    principals {
+      identifiers = ["logging.s3.amazonaws.com"]
+      type        = "Service"
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}/bucket-logging-log/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "aws-waf-logs-cloudfront_source" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-cloudfront_source.bucket
+  policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_source.json
+}
+
+resource "aws_s3_bucket_policy" "aws-waf-logs-cloudfront_destination" { # OK
+  bucket = aws_s3_bucket.aws-waf-logs-cloudfront_destination.bucket
+  policy = data.aws_iam_policy_document.aws-waf-logs-cloudfront_destination.json
+}
 
 # * The ACL logging for the CKV2_AWS_47 setup
-resource "aws_wafv2_web_acl_logging_configuration" "example" {
+resource "aws_wafv2_web_acl_logging_configuration" "aws-waf-logs-cloudfront_source" {
   log_destination_configs = [aws_s3_bucket.aws-waf-logs-cloudfront_source.arn]
   resource_arn            = aws_wafv2_web_acl.cloudfront_no_log4j.arn
 }
@@ -412,10 +570,10 @@ resource "aws_wafv2_web_acl_logging_configuration" "example" {
 # * the ACL for preventing  CKV2_AWS_47
 # https://docs.prismacloud.io/en/enterprise-edition/policy-reference/aws-policies/aws-general-policies/bc-aws-general-47
 
-resource "aws_wafv2_web_acl" "cloudfront_no_log4j" {
+resource "aws_wafv2_web_acl" "cloudfront_no_log4j" { # OK
   name        = "cloudfront_no_log4j"
   description = "Example of a managed rule."
-  scope       = "REGIONAL"
+  scope       = "CLOUDFRONT"
 
   default_action {
     allow {}
@@ -475,12 +633,6 @@ resource "aws_wafv2_web_acl" "cloudfront_no_log4j" {
     }
   }
 
-
-  tags = {
-    Tag1 = "Value1"
-    Tag2 = "Value2"
-  }
-
   visibility_config {
     cloudwatch_metrics_enabled = false
     metric_name                = "friendly-metric-name"
@@ -489,16 +641,80 @@ resource "aws_wafv2_web_acl" "cloudfront_no_log4j" {
 }
 
 # * the distribution NOTE: only one required to be in us-east-1
+
+# ** the cache and origin request policy to allow to forward all headers
+
+resource "aws_cloudfront_cache_policy" "cloudfront" {
+  name        = "cloudfront"
+  comment     = "test comment"
+  default_ttl = 50
+  max_ttl     = 100
+  min_ttl     = 1
+  parameters_in_cache_key_and_forwarded_to_origin {
+    cookies_config {
+      cookie_behavior = "whitelist"
+      cookies {
+        items = ["example"]
+      }
+    }
+    headers_config {
+      header_behavior = "whitelist"
+      headers {
+        items = ["example"]
+      }
+    }
+    query_strings_config {
+      query_string_behavior = "whitelist"
+      query_strings {
+        items = ["example"]
+      }
+    }
+  }
+}
+
+resource "aws_cloudfront_origin_request_policy" "cloudfront" {
+  name    = "cloudfront"
+  comment = "example comment"
+
+
+  headers_config {
+    header_behavior = "allViewer" # forward all headers
+  }
+
+  # just so the resource works
+  cookies_config {
+    cookie_behavior = "whitelist"
+    cookies {
+      items = ["example"]
+    }
+  }
+  query_strings_config {
+    query_string_behavior = "whitelist"
+    query_strings {
+      items = ["example"]
+    }
+  }
+}
+
 # ** the distribution declaration
 resource "aws_cloudfront_distribution" "cloudfront" {
+
+  # resource "aws_cloudwatch_log_delivery_source" "cloudfront" ^^^
+  # accomplishes CKV_AWS_86
+  # logging_config {
+  #   bucket = var.log_bucket_bucket
+  # }
+
   origin {
     domain_name = var.web_server_alb_dns_name
-    origin_id   = "web_server_origin"
+    # domain_name = "playing-cloud.xyz"
+    origin_id = "web_server_origin"
     # Add secret header to all requests to ALB
-    custom_header {
-      name  = "X-Custom-Secret"
-      value = var.web_server_cloudfront_secret_value
-    }
+    # TOFIX
+    # custom_header {
+    #   name  = "X-Custom-Secret"
+    #   value = var.web_server_cloudfront_secret_value
+    # }
     # only https
     custom_origin_config {
       http_port              = 80
@@ -509,9 +725,14 @@ resource "aws_cloudfront_distribution" "cloudfront" {
     # shield
     origin_shield {
       enabled              = true
-      origin_shield_region = "eu-north-1"
+      origin_shield_region = "us-east-1" # not available in eu-north-1
     }
+  }
 
+  custom_error_response {
+    error_code         = "504"
+    response_code      = "504"
+    response_page_path = "/custom_504.html"
   }
 
   enabled             = true
@@ -519,36 +740,39 @@ resource "aws_cloudfront_distribution" "cloudfront" {
   comment             = "CloudFront distribution with ALB"
   default_root_object = "index.html" # Modify as needed
 
-  logging_config {
-    bucket = var.log_bucket_domain_name
-    prefix = "cloudfront-logs/"
-  }
-
   default_cache_behavior {
+    # forward Host: headers [all headers]
+    # origin_request_policy_id = aws_cloudfront_origin_request_policy.cloudfront.id
+    # cache_policy_id          = aws_cloudfront_cache_policy.cloudfront.id
+
+    # Use managed policy that forwards ALL headers (including Host)
+    cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
+    origin_request_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3" # AllViewer
+
     target_origin_id       = "web_server_origin"
     viewer_protocol_policy = "redirect-to-https" # Change based on your needs
-    allowed_methods        = ["GET"]
-    cached_methods         = ["GET"] # cache get requests
-    compress               = true    # compress Accept-Encoding: gzip
-    default_ttl            = 86400   # 1-day TTL
+    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods         = ["GET", "HEAD"]
+    compress               = true  # compress Accept-Encoding: gzip
+    default_ttl            = 86400 # 1-day TTL
     min_ttl                = 0
     max_ttl                = 31536000 # 1-year TTL
 
     # If you have specific cache behavior settings
-    forwarded_values {
-      query_string = false
-      headers      = ["Authorization"]
-      cookies {
-        forward = "none" # no cookies required
-      }
-    }
+    # forwarded_values {
+    #   query_string = false
+    #   headers      = ["Authorization"]
+    #   cookies {
+    #     forward = "none" # no cookies required
+    #   }
+    # }
   }
 
   viewer_certificate {
     cloudfront_default_certificate = false
     # serving same domain as the alb so using the same cert as the alb
-    acm_certificate_arn = var.aws_playing_cloud_xyz_certificate_arn
-    #ssl_support_method       = "sni-only"
+    acm_certificate_arn      = var.aws_playing_cloud_xyz_certificate_arn
+    ssl_support_method       = "sni-only"
     minimum_protocol_version = "TLSv1.2_2025"
   }
 
@@ -561,11 +785,12 @@ resource "aws_cloudfront_distribution" "cloudfront" {
       locations        = ["US", "CA", "GB", "RO"] # US, Canada, UK, Romania
     }
   }
-  web_acl_id = aws_wafv2_web_acl.cloudfront_no_log4j.name
+  web_acl_id = aws_wafv2_web_acl.cloudfront_no_log4j.arn
 }
 
 # headers setting
 
+#checkov:skip=CKV2_AWS_32:CloudFront distribution has response headers policy
 resource "aws_cloudfront_response_headers_policy" "cloudfront" {
   name    = "cloudfront"
   comment = "Security headers policy"
@@ -582,7 +807,7 @@ resource "aws_cloudfront_response_headers_policy" "cloudfront" {
     }
 
     frame_options {
-      frame_option = "DENY" # TODO: read / prevent clickjacking attacks
+      frame_option = "DENY" # don't allow this site to render inside an iframe
       override     = true
     }
 
@@ -600,10 +825,4 @@ resource "aws_cloudfront_response_headers_policy" "cloudfront" {
       override = true
     }
   }
-}
-
-# ** the distribution certificate: NEEDS to be in us-east-1
-resource "aws_acm_certificate" "cloudfront" {
-  region      = "us-east-1"
-  domain_name = "playing-cloud.com"
 }

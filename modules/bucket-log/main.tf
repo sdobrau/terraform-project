@@ -1,6 +1,11 @@
 # * the log bucket for the elb and servers, source and destination
 
+data "aws_region" "current" {}
+data "aws_partition" "current" {}
+
 # ** the sns topics with encryption for both buckets
+# TOIMPLEMENT: event notifications to sns topics.
+# at the moment "unable to validate destination configuration"
 resource "aws_sns_topic" "web_server_logs_source_bucket_notification" { # OK
   name              = "web_server_logs_source_bucket_notification"
   kms_master_key_id = var.adminaccount_web_key_id # encryption
@@ -31,6 +36,12 @@ data "aws_iam_policy_document" "web_server_logs_allow_source_bucket_to_publish" 
       variable = "aws:SourceArn"
       values   = [aws_s3_bucket.web_server_logs_source.arn]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
   }
 }
 
@@ -51,12 +62,16 @@ data "aws_iam_policy_document" "web_server_logs_allow_destination_bucket_to_publ
       variable = "aws:SourceArn"
       values   = [aws_s3_bucket.web_server_logs_destination.arn]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
   }
 }
 
-
 # ** the bucket notification (access logging) settings: send to sns topics
-
 resource "aws_s3_bucket_notification" "web_server_logs_source_bucket_notification" { # OK
   bucket = aws_s3_bucket.web_server_logs_source.id
 
@@ -74,7 +89,7 @@ resource "aws_s3_bucket_notification" "web_server_logs_destination_bucket_notifi
   topic {
     topic_arn = aws_sns_topic.web_server_logs_destination_bucket_notification.arn
     events    = ["s3:ObjectCreated:*"]
-    # when replication done ? TODO
+    # log sent by instance
     filter_prefix = "main_logs/"
   }
 }
@@ -82,15 +97,19 @@ resource "aws_s3_bucket_notification" "web_server_logs_destination_bucket_notifi
 # ** the versioning for both buckets (necessary)
 resource "aws_s3_bucket_versioning" "web_server_logs_source" { # OK
   bucket = aws_s3_bucket.web_server_logs_source.id
+  # mfa    = "serialnumber authvalue"
   versioning_configuration {
     status = "Enabled"
+    # mfa_delete = "Enabled"
   }
 }
 
 resource "aws_s3_bucket_versioning" "web_server_logs_destination" { # OK
   bucket = aws_s3_bucket.web_server_logs_destination.id
+  # mfa    = "serialnumber authvalue"
   versioning_configuration {
     status = "Enabled"
+    # mfa_delete = "Enabled"
   }
 }
 
@@ -113,24 +132,23 @@ data "aws_iam_policy_document" "web_server_logs_destination_logging" { # OK
   }
 }
 
-# TODO: bucket logging for both bucket and state buckets to logging bucket
 resource "aws_s3_bucket_policy" "web_server_logs_destination" { # OK
   bucket = aws_s3_bucket.web_server_logs_destination.bucket
   policy = data.aws_iam_policy_document.web_server_logs_destination_logging.json
 }
 
 # *** the bucket logging (server access logging) settings themselves
-resource "aws_s3_bucket_logging" "web_server_logs_source" { # OK
-  bucket = aws_s3_bucket.web_server_logs_source.bucket
+# resource "aws_s3_bucket_logging" "web_server_logs_source" { # OK
+#   bucket = aws_s3_bucket.web_server_logs_source.bucket
 
-  target_bucket = aws_s3_bucket.web_server_logs_source.bucket
-  target_prefix = "bucket-logging-log/"
-  target_object_key_format {
-    partitioned_prefix {
-      partition_date_source = "EventTime"
-    }
-  }
-}
+#   target_bucket = aws_s3_bucket.web_server_logs_source.bucket
+#   target_prefix = "bucket-logging-log/"
+#   target_object_key_format {
+#     partitioned_prefix {
+#       partition_date_source = "EventTime"
+#     }
+#   }
+# }
 
 resource "aws_s3_bucket_logging" "web_server_logs_destination" { # OK
   bucket = aws_s3_bucket.web_server_logs_destination.bucket
@@ -213,26 +231,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "web_server_logs_destination" {
   }
 }
 
-# ** the encryption configuration for source and destination
-resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_source" { # OK
-  bucket = aws_s3_bucket.web_server_logs_source.id
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_id
-      sse_algorithm     = "aws:kms"
-    }
-  }
-}
-
-resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_destination" { # OK
-  bucket = aws_s3_bucket.web_server_logs_destination.id
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_id
-      sse_algorithm     = "aws:kms"
-    }
-  }
-}
 
 # ** the public access blocking configuration for source and destination
 
@@ -255,50 +253,71 @@ resource "aws_s3_bucket_public_access_block" "web_server_logs_destination" { # O
 }
 
 # ** the buckets themselves
-resource "aws_s3_bucket" "web_server_logs_source" { # OK
-  bucket = "web-server-logs-source"
 
+resource "aws_s3_bucket" "web_server_logs_source" { # OK
+  bucket        = "web-server-logs-source-1"
+  force_destroy = true
   tags = {
     component = "web"
   }
 }
 
-# TODO: log groups? for s3 logging, elb, state, application logs
-
 resource "aws_s3_bucket" "web_server_logs_destination" { # OK
-  bucket = "web-server-logs-destination"
-
+  bucket        = "web-server-logs-destination-1"
+  force_destroy = true
   tags = {
     component = "web"
+  }
+}
+# ** the encryption configuration for logs source and destination
+resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_source" {
+  bucket = aws_s3_bucket.web_server_logs_source.id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = var.adminaccount_web_key_arn
+      sse_algorithm     = "aws:kms"
+    }
+  }
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_destination" {
+  bucket = aws_s3_bucket.web_server_logs_destination.id
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = var.adminaccount_web_key_arn
+      sse_algorithm     = "aws:kms"
+    }
   }
 }
 
 # ** the bucket policy: allow put object from the web_server instance role and
 #  elb, and also bucket logging
 
-# TODO: debug module.bucket-log.aws_s3_bucket_policy.web_server_logs_source_elb_ec2_and_bucket_logging: Still creating... [01m10s elapsed]
-
 data "aws_iam_policy_document" "web_server_alb_access_logs_and_ec2_instances" { # OK
-  # using arn because arn is - not _
+
+  # allow bucket logging
   statement {
     principals {
       identifiers = ["logging.s3.amazonaws.com"] # allow s3
       type        = "Service"
     }
     actions   = ["s3:PutObject"]
-    resources = ["arn:aws:s3:::${aws_s3_bucket.web_server_logs_source.id}/bucket-logging-log/*"]
+    resources = ["${aws_s3_bucket.web_server_logs_source.arn}/bucket-logging-log/*"]
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
       values   = [var.aws_source_account_id]
     }
   }
+
+  # allow ELB
   statement {
-    effect = "Allow" # allow ELB
+    effect = "Allow"
     resources = [
-      "arn:aws:s3:::${aws_s3_bucket.web_server_logs_source.id}/access_logs/*",
-      "arn:aws:s3:::${aws_s3_bucket.web_server_logs_source.id}/alb_connection_logs/*",
-      "arn:aws:s3:::${aws_s3_bucket.web_server_logs_source.id}/alb_health_check_logs/*"
+      "${aws_s3_bucket.web_server_logs_source.arn}/alb_access_logs/*",
+      "${aws_s3_bucket.web_server_logs_source.arn}/alb_connection_logs/*",
+      "${aws_s3_bucket.web_server_logs_source.arn}/alb_health_check_logs/*"
     ]
     actions = ["s3:PutObject"]
 
@@ -308,8 +327,9 @@ data "aws_iam_policy_document" "web_server_alb_access_logs_and_ec2_instances" { 
     }
   }
 
+  # allow main logs
   statement {
-    effect    = "Allow" # allow main logs
+    effect    = "Allow"
     resources = ["arn:aws:s3:::${aws_s3_bucket.web_server_logs_source.id}/main_logs/*"]
 
     actions = ["s3:PutObject"]
@@ -319,6 +339,51 @@ data "aws_iam_policy_document" "web_server_alb_access_logs_and_ec2_instances" { 
       identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/web_server"]
     }
   }
+
+  # allow cloudtrail
+  statement {
+    sid    = "AWSCloudTrailAclCheck"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    actions   = ["s3:GetBucketAcl"]
+    resources = [aws_s3_bucket.web_server_logs_source.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:${data.aws_partition.current.partition}:cloudtrail:${data.aws_region.current.region}:${var.aws_source_account_id}:trail/cloudtrail"]
+    }
+  }
+
+  statement {
+    sid    = "AWSCloudTrailWrite"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+
+    actions   = ["s3:PutObject"]
+    resources = ["${aws_s3_bucket.web_server_logs_source.arn}/cloudtrail/AWSLogs/${var.aws_source_account_id}/*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "s3:x-amz-acl"
+      values   = ["bucket-owner-full-control"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceArn"
+      values   = ["arn:${data.aws_partition.current.partition}:cloudtrail:${data.aws_region.current.region}:${var.aws_source_account_id}:trail/cloudtrail"]
+    }
+  }
+  # for cloudfront logging
+
 }
 
 resource "aws_s3_bucket_policy" "web_server_logs_source_elb_ec2_and_bucket_logging" { # OK
@@ -327,7 +392,6 @@ resource "aws_s3_bucket_policy" "web_server_logs_source_elb_ec2_and_bucket_loggi
 }
 
 # ** the logs bucket replication configuration
-
 # *** the permissions required for replication
 data "aws_iam_policy_document" "web_server_logs_replication_assume_role" { # OK
   statement {
@@ -397,7 +461,6 @@ resource "aws_iam_role_policy_attachment" "web_server_logs_replication" { # OK
 # *** the actual bucket replication configuration (uni-directional)
 
 resource "aws_s3_bucket_replication_configuration" "web_server_logs_replication" { # OK
-  region = "eu-north-1"
 
   # Must have bucket versioning enabled first
   depends_on = [aws_s3_bucket_versioning.web_server_logs_source]
@@ -407,18 +470,35 @@ resource "aws_s3_bucket_replication_configuration" "web_server_logs_replication"
 
   rule {
     id = "all"
-
+    # Replication configuration XML V2 includes the Filter element for rules.
     # replicate everything
-    # filter {
-    #   prefix = "example"
-    # }
-
+    # If you specify a rule with an empty filter tag your rule will apply to all
+    # objects in your bucket
+    delete_marker_replication {
+      status = "Enabled"
+    }
+    filter {
+      prefix = "" # all?
+    }
     status = "Enabled"
 
     destination {
       bucket        = aws_s3_bucket.web_server_logs_destination.arn
       storage_class = "STANDARD_IA"
-
+      # enable RTC
+      replication_time {
+        status = "Enabled"
+        time {
+          minutes = 15
+        }
+      }
+      # for rtc
+      metrics {
+        event_threshold {
+          minutes = 15
+        }
+        status = "Enabled"
+      }
       encryption_configuration {
         replica_kms_key_id = var.adminaccount_web_key_arn
       }

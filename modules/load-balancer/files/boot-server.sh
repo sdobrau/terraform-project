@@ -1,4 +1,4 @@
-##!/usr/bin/env bash
+#!/usr/bin/env bash
 
 yum -y install amazon-cloudwatch-agent
 systemctl enable --now amazon-cloudwatch-agent.service

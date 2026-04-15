@@ -1,6 +1,6 @@
 # * the state bucket and policies
 
-# ** the sns topics with encryption for both buckets
+# # ** the sns topics with encryption for both buckets
 resource "aws_sns_topic" "web_server_state_source_bucket_notification" { # OK
   name              = "web_server_state_source_bucket_notification"
   kms_master_key_id = var.adminaccount_web_key_id
@@ -14,7 +14,6 @@ resource "aws_sns_topic" "web_server_state_destination_bucket_notification" { # 
 }
 
 # ** the sns topic destination policies for s3
-
 data "aws_iam_policy_document" "web_server_state_allow_source_bucket_to_publish" { # OK
   statement {
     effect = "Allow"
@@ -31,6 +30,12 @@ data "aws_iam_policy_document" "web_server_state_allow_source_bucket_to_publish"
       test     = "ArnLike"
       variable = "aws:SourceArn"
       values   = [aws_s3_bucket.web_server_state_source.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
     }
   }
 }
@@ -52,6 +57,12 @@ data "aws_iam_policy_document" "web_server_state_allow_destination_bucket_to_pub
       variable = "aws:SourceArn"
       values   = [aws_s3_bucket.web_server_state_destination.arn]
     }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
   }
 }
 
@@ -71,38 +82,14 @@ resource "aws_s3_bucket_notification" "web_server_state_destination_bucket_notif
   bucket = aws_s3_bucket.web_server_state_destination.id
 
   topic {
-    topic_arn = aws_sns_topic.web_server_state_destination_bucket_notification.arn
-    events    = ["s3:ObjectCreated:*"]
-    # when replication done ? TODO
+    topic_arn     = aws_sns_topic.web_server_state_destination_bucket_notification.arn
+    events        = ["s3:ObjectCreated:*"]
     filter_prefix = "terraform_state_file.tflock"
   }
 }
 
-# # FIXME TODO: debug this soon. resource not valid
-# # ** the bucket logging configurations for both buckets
-# data "aws_iam_policy_document" "web_server_state_source_logging" {
-#   statement {
-#     principals {
-#       identifiers = ["logging.s3.amazonaws.com"]
-#       type        = "Service"
-#     }
-#     actions = ["s3:PutObject"]
-#     # TODO: debug replace this with var form soon
-#     resources = ["arn:aws:s3:::web-server-logs-source/bucket-logging-log/*"]
-#     condition {
-#       test     = "StringEquals"
-#       variable = "aws:SourceAccount"
-#       values   = [var.aws_source_account_id]
-#     }
-#   }
-# }
-
-# # TODO: bucket logging for both bucket and state buckets to logging bucket
-# resource "aws_s3_bucket_policy" "web_server_state_source" { # OK
-#   bucket = aws_s3_bucket.web_server_state_source.id
-#   policy = data.aws_iam_policy_document.web_server_state_source_logging.json
-# }
-
+#
+# ** the bucket logging configurations for both buckets
 resource "aws_s3_bucket_logging" "web_server_state_source" { # OK
   bucket = aws_s3_bucket.web_server_state_source.id
 
@@ -113,6 +100,28 @@ resource "aws_s3_bucket_logging" "web_server_state_source" { # OK
       partition_date_source = "EventTime"
     }
   }
+}
+
+data "aws_iam_policy_document" "web_server_state_destination_logging" { # OK
+  statement {
+    principals {
+      identifiers = ["logging.s3.amazonaws.com"]
+      type        = "Service"
+    }
+    actions = ["s3:PutObject"]
+
+    resources = ["arn:aws:s3:::${aws_s3_bucket.web_server_state_destination.id}/bucket-logging-log/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "web_server_state_destination" { # OK
+  bucket = aws_s3_bucket.web_server_state_destination.id
+  policy = data.aws_iam_policy_document.web_server_state_destination_logging.json
 }
 
 resource "aws_s3_bucket_logging" "web_server_state_destination" { # OK
@@ -129,21 +138,25 @@ resource "aws_s3_bucket_logging" "web_server_state_destination" { # OK
 # ** the versioning for both buckets (necessary)
 resource "aws_s3_bucket_versioning" "web_server_state_source" { # OK
   bucket = aws_s3_bucket.web_server_state_source.id
+  # mfa    = "serialnumber authvalue"
   versioning_configuration {
     status = "Enabled"
+    # mfa_delete = "Enabled"
   }
 }
 
 resource "aws_s3_bucket_versioning" "web_server_state_destination" { # OK
   bucket = aws_s3_bucket.web_server_state_destination.id
+  # mfa    = "serialnumber authvalue"
   versioning_configuration {
     status = "Enabled"
+    # mfa_delete = "Enabled"
   }
 }
 
 # ** the encryption configuration for state source and destination
 
-resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_source" {
+resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_source" { # OK
   bucket = aws_s3_bucket.web_server_state_source.bucket
 
   rule {
@@ -177,7 +190,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_source" {
   }
 }
 
-resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_destination" {
+resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_destination" { # OK
   bucket = aws_s3_bucket.web_server_state_destination.bucket
 
   rule {
@@ -212,11 +225,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_destination" 
 }
 
 # ** the encryption configuration for state source and destination
+
 resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_source" {
   bucket = aws_s3_bucket.web_server_state_source.id
+
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_id
+      kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
   }
@@ -226,14 +241,13 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_
   bucket = aws_s3_bucket.web_server_state_destination.id
   rule {
     apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_id
+      kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
   }
 }
-
 # ** the public access block
-resource "aws_s3_bucket_public_access_block" "web_server_state_source" {
+resource "aws_s3_bucket_public_access_block" "web_server_state_source" { # OK
   bucket = aws_s3_bucket.web_server_state_source.id
 
   block_public_acls       = true # block any acls that would make it public
@@ -242,7 +256,7 @@ resource "aws_s3_bucket_public_access_block" "web_server_state_source" {
   restrict_public_buckets = true # only aws services and owner can access if pub
 }
 
-resource "aws_s3_bucket_public_access_block" "web_server_state_destination" {
+resource "aws_s3_bucket_public_access_block" "web_server_state_destination" { # OK
   bucket = aws_s3_bucket.web_server_state_destination.id
 
   block_public_acls       = true
@@ -251,24 +265,60 @@ resource "aws_s3_bucket_public_access_block" "web_server_state_destination" {
   restrict_public_buckets = true
 }
 
-# ** the state bucket, source and destination
+# ** the state bucket themselves , source and destination
 
-resource "aws_s3_bucket" "web_server_state_source" {
-  bucket = "web-server-state-source"
+resource "aws_s3_bucket" "web_server_state_source" { # OK
+  bucket        = "web-server-state-source-2"
+  force_destroy = true
+
+  # required for load balancer access logs
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm = "AES256"
+      }
+    }
+  }
+
 }
 
-resource "aws_s3_bucket" "web_server_state_destination" {
-  bucket = "web-server-state-destination"
+resource "aws_s3_bucket" "web_server_state_destination" { # OK
+  bucket        = "web-server-state-destination-2"
+  force_destroy = true
+
+  # required for load balancer access logs
+  server_side_encryption_configuration {
+    rule {
+      apply_server_side_encryption_by_default {
+        sse_algorithm = "AES256"
+      }
+    }
+  }
+
 }
 
 # ** the iam policy that contains requirements for the state file
 
-data "aws_iam_policy_document" "web_server_terraform" {
+data "aws_iam_policy_document" "web_server_state_source" { # OK
+  # for bucket access logging
+  statement {
+    principals {
+      identifiers = ["logging.s3.amazonaws.com"]
+      type        = "Service"
+    }
+    actions   = ["s3:PutObject"]
+    resources = ["arn:aws:s3:::${aws_s3_bucket.web_server_state_source.id}/bucket-logging-log/*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
+  }
   statement {
     principals {
       type = "AWS"
 
-      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/web_server_terraform"]
+      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/terraform"]
     }
     effect    = "Allow"
     resources = ["${aws_s3_bucket.web_server_state_source.arn}"]
@@ -281,12 +331,12 @@ data "aws_iam_policy_document" "web_server_terraform" {
     }
   }
 
-
+  # allow terraform to put a state file
   statement {
     effect = "Allow"
     principals {
       type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/web_server_terraform"]
+      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/terraform"]
     }
     resources = ["${aws_s3_bucket.web_server_state_source.arn}/terraform_state_file"]
 
@@ -300,7 +350,7 @@ data "aws_iam_policy_document" "web_server_terraform" {
     effect = "Allow"
     principals {
       type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/web_server_terraform"]
+      identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/terraform"]
     }
     resources = ["${aws_s3_bucket.web_server_state_source.arn}/terraform_state_file.tflock"]
 
@@ -314,15 +364,13 @@ data "aws_iam_policy_document" "web_server_terraform" {
 
 # the role attachment
 # bucket side
-resource "aws_s3_bucket_policy" "web_server_terraform" { # OK
+resource "aws_s3_bucket_policy" "web_server_state_source" { # OK
   bucket = aws_s3_bucket.web_server_state_source.id
-  policy = data.aws_iam_policy_document.web_server_terraform.json
+  policy = data.aws_iam_policy_document.web_server_state_source.json
 }
 
-# TODO: proper form for referencing data?
 # client-side (allow root to assume the role)
-
-data "aws_iam_policy_document" "web_server_terraform_assume_role" { # OK
+data "aws_iam_policy_document" "terraform_assume_role" { # OK
   statement {
     actions = [
       "sts:AssumeRole",
@@ -336,15 +384,15 @@ data "aws_iam_policy_document" "web_server_terraform_assume_role" { # OK
   }
 }
 
-resource "aws_iam_role" "web_server_terraform" { # OK
-  name               = "web_server_terraform"
-  assume_role_policy = data.aws_iam_policy_document.web_server_terraform_assume_role.json
+resource "aws_iam_role" "terraform" { # OK
+  name               = "terraform"
+  assume_role_policy = data.aws_iam_policy_document.terraform_assume_role.json
 }
 
-# ** TODO the state bucket same-region replication configuration
+# ** the state bucket same-region replication configuration
 
 # *** the permissions required for replication
-data "aws_iam_policy_document" "web_server_state_replication_assume_role" {
+data "aws_iam_policy_document" "web_server_state_replication_assume_role" { # OK
   statement {
     effect = "Allow"
 
@@ -357,12 +405,12 @@ data "aws_iam_policy_document" "web_server_state_replication_assume_role" {
   }
 }
 
-resource "aws_iam_role" "web_server_state_replication" {
+resource "aws_iam_role" "web_server_state_replication" { # OK
   name               = "web_server_state_replication"
   assume_role_policy = data.aws_iam_policy_document.web_server_state_replication_assume_role.json
 }
 
-data "aws_iam_policy_document" "web_server_state_replication_listing" {
+data "aws_iam_policy_document" "web_server_state_replication_listing" { # OK
   statement {
     effect = "Allow"
 
@@ -399,18 +447,18 @@ data "aws_iam_policy_document" "web_server_state_replication_listing" {
   }
 }
 
-resource "aws_iam_policy" "web_server_state_replication_listing" {
+resource "aws_iam_policy" "web_server_state_replication_listing" { # OK
   name   = "web_server_state_replication_listing"
   policy = data.aws_iam_policy_document.web_server_state_replication_listing.json
 }
 
-resource "aws_iam_role_policy_attachment" "web_server_state_replication" {
+resource "aws_iam_role_policy_attachment" "web_server_state_replication" { # OK
   role       = aws_iam_role.web_server_state_replication.name
   policy_arn = aws_iam_policy.web_server_state_replication_listing.arn
 }
 
 # *** the actual bucket replication configuration
-resource "aws_s3_bucket_replication_configuration" "web_server_state_replication" {
+resource "aws_s3_bucket_replication_configuration" "web_server_state_replication" { # OK
   # Must have bucket versioning enabled first
   depends_on = [aws_s3_bucket_versioning.web_server_state_source]
 
@@ -421,22 +469,39 @@ resource "aws_s3_bucket_replication_configuration" "web_server_state_replication
 
   rule {
     id = "all" # of rule this name
-
-    # replicate everything
-    # filter {
-    #   prefix = "example" # for keys matching this prefix
-    # }
+    # Replication configuration XML V2 includes the Filter element for rules.
+    # If you specify a rule with an empty filter tag your rule will apply to all
+    # objects in your bucket
+    delete_marker_replication {
+      status = "Enabled"
+    }
+    filter {
+      prefix = "" # all?
+    }
     status = "Enabled"
 
     # to this bucket
     destination {
       bucket        = aws_s3_bucket.web_server_state_destination.arn
       storage_class = "STANDARD_IA"
+      # enable RTC
+      replication_time {
+        status = "Enabled"
+        time {
+          minutes = 15
+        }
+      }
+      # for rtc
+      metrics {
+        event_threshold {
+          minutes = 15
+        }
+        status = "Enabled"
+      }
       encryption_configuration {
         replica_kms_key_id = var.adminaccount_web_key_arn
       }
     }
-
     source_selection_criteria {
       sse_kms_encrypted_objects {
         status = "Enabled"
