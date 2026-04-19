@@ -83,32 +83,32 @@ pipeline {
                 sh 'cd test'
                 sh 'go test -v -timeout 10m'
             }
-            stage('Deploy') {
-                when {
-                    expression {
-                        currentBuild.result == null || currentBuild.result == 'SUCCESS'
-                    }
-                }
-                steps {
-                    sh 'terraform apply'
+        }
+        stage('Deploy') {
+            when {
+                expression {
+                    currentBuild.result == null || currentBuild.result == 'SUCCESS'
                 }
             }
-        }
-        post {
-            always {
-                ircNotify targets: "sdobrau #jenkins-room", customMessage:
-                "${env.JOB_NAME} run"
-            }
-            success {
-                ircNotify targets: "sdobrau #jenkins-room", customMessage:
-                "${env.JOB_NAME} successfully built"
-            }
-            failure {
-                ircNotify targets: "sdobrau #jenkins-room", customMessage:
-                "${env.JOB_NAME} successfully built"
-                ircNotify targets: "sdobrau #jenkins-room", customMessage:
-                "${env.JOB_NAME} failed to build"
+            steps {
+                sh 'terraform apply'
             }
         }
-}
+    }
+    post {
+        always {
+            ircNotify targets: "sdobrau #jenkins-room", customMessage:
+            "${env.JOB_NAME} run"
+        }
+        success {
+            ircNotify targets: "sdobrau #jenkins-room", customMessage:
+            "${env.JOB_NAME} successfully built"
+        }
+        failure {
+            ircNotify targets: "sdobrau #jenkins-room", customMessage:
+            "${env.JOB_NAME} successfully built"
+            ircNotify targets: "sdobrau #jenkins-room", customMessage:
+            "${env.JOB_NAME} failed to build"
+        }
+    }
 }
