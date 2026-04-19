@@ -1,1 +1,28 @@
+ # access logs configured
+AVD-AWS-0013
+AVD-AWS-0010
+# recommended by AWS and/or just a service principal
 AVD-AWS-0053
+# statement: recommended by AWS and/or just a service principal
+AVD-AWS-0057
+ # load balancer is internal so ok
+AVD-AWS-0054
+ # need for nat gateway
+AVD-AWS-0164
+# bucket key is enabled for all buckets excepting log bucketw
+AVD-AWS-0088
+# we need this for fetching packages in the private instances so need
+# internet connectivity
+AVD-AWS-0104
+# server side enc enabled for all but logs bucket using resource
+# (otherwise alb logs would not work)
+AVD-AWS-0132
+# VPC flow logs are defined
+AVD-AWS-0178
+# access logging infinite loop avoided by not access logging the
+# access log bucket itself
+#
+# see link
+# https://docs.aws.amazon.com/AmazonS3/latest/userguide/ServerLogs.html
+AVD-AWS-0163
+AVD-AWS-0089
