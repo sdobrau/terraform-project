@@ -1,5 +1,15 @@
 # * the kms key and key policy to encrypt the ebs storage and others
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 data "aws_region" "current" {}
 
 resource "aws_kms_key" "adminaccount_web" { # OK
@@ -276,7 +286,7 @@ data "aws_iam_policy_document" "web_server_asg" { # OK
     condition {
       test     = "StringEquals"
       variable = "kms:CallerAccount"
-      values   = ["${var.aws_source_account_id}"] # allow caller accounts to
+      values   = [var.aws_source_account_id] # allow caller accounts to
     }
 
     condition {

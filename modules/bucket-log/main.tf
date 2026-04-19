@@ -1,5 +1,15 @@
 # * the log bucket for the elb and servers, source and destination
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 data "aws_region" "current" {}
 data "aws_partition" "current" {}
 
@@ -270,26 +280,27 @@ resource "aws_s3_bucket" "web_server_logs_destination" { # OK
   }
 }
 # ** the encryption configuration for logs source and destination
-resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_source" {
-  bucket = aws_s3_bucket.web_server_logs_source.id
+# TOFIX: disabling this to see if access_logs etc in alb work
+# resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_source" {
+#   bucket = aws_s3_bucket.web_server_logs_source.id
 
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_arn
-      sse_algorithm     = "aws:kms"
-    }
-  }
-}
+#   rule {
+#     apply_server_side_encryption_by_default {
+#       kms_master_key_id = var.adminaccount_web_key_arn
+#       sse_algorithm     = "aws:kms"
+#     }
+#   }
+# }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_destination" {
-  bucket = aws_s3_bucket.web_server_logs_destination.id
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_arn
-      sse_algorithm     = "aws:kms"
-    }
-  }
-}
+# resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_logs_destination" {
+#   bucket = aws_s3_bucket.web_server_logs_destination.id
+#   rule {
+#     apply_server_side_encryption_by_default {
+#       kms_master_key_id = var.adminaccount_web_key_arn
+#       sse_algorithm     = "aws:kms"
+#     }
+#   }
+# }
 
 # ** the bucket policy: allow put object from the web_server instance role and
 #  elb, and also bucket logging
@@ -312,14 +323,38 @@ data "aws_iam_policy_document" "web_server_alb_access_logs_and_ec2_instances" { 
   }
 
   # allow ELB
+  # statement {
+  #   effect = "Allow"
+  #   resources = [
+  #     "${aws_s3_bucket.web_server_logs_source.arn}/alb_access_logs/*",
+  #     "${aws_s3_bucket.web_server_logs_source.arn}/alb_connection_logs/*",
+  #     "${aws_s3_bucket.web_server_logs_source.arn}/alb_health_check_logs/*"
+  #   ]
+  #   actions = ["s3:PutObject"]
+
+  #   principals {
+  #     type        = "Service"
+  #     identifiers = ["logdelivery.elasticloadbalancing.amazonaws.com"]
+  #   }
+  # }
+
+  # testing
   statement {
-    effect = "Allow"
-    resources = [
-      "${aws_s3_bucket.web_server_logs_source.arn}/alb_access_logs/*",
-      "${aws_s3_bucket.web_server_logs_source.arn}/alb_connection_logs/*",
-      "${aws_s3_bucket.web_server_logs_source.arn}/alb_health_check_logs/*"
-    ]
-    actions = ["s3:PutObject"]
+    effect    = "Allow"
+    resources = ["${aws_s3_bucket.web_server_logs_source.arn}/*"]
+    actions   = ["s3:PutObject"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["logdelivery.elasticloadbalancing.amazonaws.com"]
+    }
+  }
+
+  # suggested by amazon's AI
+  statement {
+    effect    = "Allow"
+    resources = [aws_s3_bucket.web_server_logs_source.arn]
+    actions   = ["s3:ListBucket"]
 
     principals {
       type        = "Service"

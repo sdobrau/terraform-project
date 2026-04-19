@@ -1,5 +1,15 @@
 # * the database with replication
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 # TOFIX
 # resource "aws_dynamodb_global_secondary_index" "web_server" { # OK
 #   table_name = aws_dynamodb_table.web_server.name

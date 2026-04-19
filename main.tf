@@ -1,4 +1,4 @@
-# main ec2 instance
+# * the main outside view
 
 # cloudfront: d2i2uinmeijqvf.cloudfront.net
 # elb: web-server-2068915431.us-east-1.elb.amazonaws.com
@@ -25,8 +25,8 @@ terraform {
       version = "~> 6.0"
     }
   }
+  required_version = "~> 1.14"
 }
-
 
 # Configure the AWS Provider
 provider "aws" {
@@ -44,16 +44,10 @@ output "aws_source_account" {
   value = data.aws_caller_identity.source
 }
 
-####
-
-# module "remoting-access" {
-#   source = "./modules/remoting-access"
-# }
+# * the modules
 
 module "iam-policies" { # OK
-  source                            = "./modules/iam-policies"
-  aws_source_account_id             = data.aws_caller_identity.source.account_id
-  cloudwatch_route53_log_group_name = module.load-balancer.cloudwatch_route53_log_group_name
+  source = "./modules/iam-policies"
 }
 
 module "db" {
@@ -65,24 +59,18 @@ module "kms-key" { # OK
   source                            = "./modules/kms-key"
   aws_source_account_id             = data.aws_caller_identity.source.account_id
   cloudwatch_route53_log_group_name = module.load-balancer.cloudwatch_route53_log_group_name
-  domain_name                       = "playing-cloud.xyz"
-  web_server_asg_role               = "AWSServiceRoleForAutoScaling"
 }
 
 module "vpc" {
   source = "./modules/vpc"
 
   adminaccount_web_key_arn = module.kms-key.adminaccount_web_key.arn
-  log_bucket_arn           = module.bucket-log.log_bucket.arn
-
 }
 
 module "load-balancer" {
   source = "./modules/load-balancer"
 
   aws_source_account_id = data.aws_caller_identity.source.account_id
-
-  aws_playing_cloud_xyz_certificate_arn = "arn:aws:acm:us-east-1:276719381645:certificate/92c85a20-ebe7-454e-9eb5-28484cd7e16f"
 
   adminaccount_web_key_arn = module.kms-key.adminaccount_web_key.arn
   adminaccount_web_key_id  = module.kms-key.adminaccount_web_key.id
@@ -91,7 +79,6 @@ module "load-balancer" {
 
   domain_name = "playing-cloud.xyz"
 
-  log_bucket_arn    = module.bucket-log.log_bucket.arn
   log_bucket_bucket = module.bucket-log.log_bucket.bucket
   log_bucket_id     = module.bucket-log.log_bucket.id
 
@@ -111,8 +98,7 @@ module "cloudtrail" {
   adminaccount_web_key_arn = module.kms-key.adminaccount_web_key.arn
   adminaccount_web_key_id  = module.kms-key.adminaccount_web_key.id
 
-  log_bucket_arn = module.bucket-log.log_bucket.arn
-  log_bucket_id  = module.bucket-log.log_bucket.id
+  log_bucket_id = module.bucket-log.log_bucket.id
 }
 
 module "cloudfront" {
@@ -125,9 +111,8 @@ module "cloudfront" {
   adminaccount_web_key_arn = module.kms-key.adminaccount_web_key.arn
   adminaccount_web_key_id  = module.kms-key.adminaccount_web_key.id
 
-  log_bucket_arn         = module.bucket-log.log_bucket.arn
-  log_bucket_bucket      = module.bucket-log.log_bucket.bucket
-  log_bucket_domain_name = module.bucket-log.log_bucket.bucket_domain_name
+  log_bucket_arn    = module.bucket-log.log_bucket.arn
+  log_bucket_bucket = module.bucket-log.log_bucket.bucket
 
   web_server_alb_arn                 = module.load-balancer.web_server_alb_arn
   web_server_alb_dns_name            = module.load-balancer.web_server_alb_dns_name
@@ -150,7 +135,5 @@ module "bucket-state" {
   aws_source_account_id    = data.aws_caller_identity.source.account_id
   adminaccount_web_key_arn = module.kms-key.adminaccount_web_key.arn
   adminaccount_web_key_id  = module.kms-key.adminaccount_web_key.id
-  log_bucket_arn           = module.bucket-log.log_bucket.arn
-  log_bucket_id            = module.bucket-log.log_bucket.id
   log_bucket_bucket        = module.bucket-log.log_bucket.bucket
 }

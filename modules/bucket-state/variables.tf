@@ -13,14 +13,7 @@ variable "adminaccount_web_key_id" {
   type        = string
 }
 
-variable "log_bucket_arn" {
-  description = "ARN of log bucket"
-}
-
-variable "log_bucket_id" {
-  description = "ID of log bucket"
-}
-
 variable "log_bucket_bucket" {
   description = "Name of log bucket"
+  type        = string
 }

@@ -1,5 +1,15 @@
 # * the state bucket and policies
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 # # ** the sns topics with encryption for both buckets
 resource "aws_sns_topic" "web_server_state_source_bucket_notification" { # OK
   name              = "web_server_state_source_bucket_notification"
@@ -321,7 +331,7 @@ data "aws_iam_policy_document" "web_server_state_source" { # OK
       identifiers = ["arn:aws:iam::${var.aws_source_account_id}:role/terraform"]
     }
     effect    = "Allow"
-    resources = ["${aws_s3_bucket.web_server_state_source.arn}"]
+    resources = [aws_s3_bucket.web_server_state_source.arn]
     actions   = ["s3:ListBucket"]
 
     condition {

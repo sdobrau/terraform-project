@@ -28,11 +28,6 @@ variable "log_bucket_bucket" {
   type        = string
 }
 
-variable "log_bucket_domain_name" {
-  description = "Domain name of log bucket"
-  type        = string
-}
-
 variable "web_server_alb_arn" {
   description = "The ARN of the ALB"
   type        = string

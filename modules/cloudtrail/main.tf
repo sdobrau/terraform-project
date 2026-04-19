@@ -1,74 +1,84 @@
 # * sns topic for cloudtrail
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 data "aws_region" "current" {}
 
-# depends on log bucket policy to be properly configured
+# NOTE: depends on log bucket policy to be properly configured
 
-# resource "aws_sns_topic" "cloudtrail" { # OK
-#   name              = "cloudtrail"
-#   kms_master_key_id = var.adminaccount_web_key_id # encryption
-# }
+resource "aws_sns_topic" "cloudtrail" { # OK
+  name              = "cloudtrail"
+  kms_master_key_id = var.adminaccount_web_key_id # encryption
+}
 
-# # taken from the default permissions from a newly created trail
-# data "aws_iam_policy_document" "cloudtrail_sns" {
-#   # this part specifically
-#   statement {
-#     sid       = "__default_statement_ID"
-#     effect    = "Allow"
-#     resources = ["${aws_sns_topic.cloudtrail.arn}"]
+# taken from the default permissions from a newly created trail
+data "aws_iam_policy_document" "cloudtrail_sns" {
+  # this part specifically
+  statement {
+    sid       = "__default_statement_ID"
+    effect    = "Allow"
+    resources = [aws_sns_topic.cloudtrail.arn]
 
-#     actions = [
-#       "SNS:GetTopicAttributes",
-#       "SNS:SetTopicAttributes",
-#       "SNS:AddPermission",
-#       "SNS:RemovePermission",
-#       "SNS:DeleteTopic",
-#       "SNS:Subscribe",
-#       "SNS:ListSubscriptionsByTopic",
-#       "SNS:Publish",
-#     ]
+    actions = [
+      "SNS:GetTopicAttributes",
+      "SNS:SetTopicAttributes",
+      "SNS:AddPermission",
+      "SNS:RemovePermission",
+      "SNS:DeleteTopic",
+      "SNS:Subscribe",
+      "SNS:ListSubscriptionsByTopic",
+      "SNS:Publish",
+    ]
 
-#     condition {
-#       test     = "StringEquals"
-#       variable = "AWS:SourceOwner"
-#       values   = [var.aws_source_account_id]
-#     }
+    condition {
+      test     = "StringEquals"
+      variable = "AWS:SourceOwner"
+      values   = [var.aws_source_account_id]
+    }
 
-#     principals {
-#       type        = "AWS"
-#       identifiers = ["*"]
-#     }
-#   }
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+  }
 
-#   statement {
-#     sid       = "Example SNS topic policy"
-#     effect    = "Allow"
-#     resources = ["${aws_sns_topic.cloudtrail.arn}"]
-#     actions   = ["SNS:Publish"]
+  statement {
+    sid       = "Example SNS topic policy"
+    effect    = "Allow"
+    resources = [aws_sns_topic.cloudtrail.arn]
+    actions   = ["SNS:Publish"]
 
-#     condition {
-#       test     = "ArnLike"
-#       variable = "aws:SourceArn"
-#       values   = ["${aws_cloudtrail.cloudtrail.arn}"]
-#     }
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = [aws_cloudtrail.cloudtrail.arn]
+    }
 
-#     condition {
-#       test     = "StringEquals"
-#       variable = "aws:SourceAccount"
-#       values   = ["${var.aws_source_account_id}"]
-#     }
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.aws_source_account_id]
+    }
 
-#     principals {
-#       type        = "Service"
-#       identifiers = ["cloudtrail.amazonaws.com"]
-#     }
-#   }
-# }
+    principals {
+      type        = "Service"
+      identifiers = ["cloudtrail.amazonaws.com"]
+    }
+  }
+}
 
-# resource "aws_sns_topic_policy" "cloudtrail" {
-#   arn    = aws_sns_topic.cloudtrail.arn
-#   policy = data.aws_iam_policy_document.cloudtrail_sns.json
-# }
+resource "aws_sns_topic_policy" "cloudtrail" {
+  arn    = aws_sns_topic.cloudtrail.arn
+  policy = data.aws_iam_policy_document.cloudtrail_sns.json
+}
 
 # * log group
 

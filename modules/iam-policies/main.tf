@@ -1,5 +1,15 @@
 # * the iam policy, role, and instance profile for all 3 webservers
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 # ** terraform iam role with AdministratorAccess policy
 
 # 'terraform' role can be assumed when running terraform with

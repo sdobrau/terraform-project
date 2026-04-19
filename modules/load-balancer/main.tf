@@ -1,5 +1,15 @@
 # * elb, certificate, target group, attachment and autoscaling group
 
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 data "aws_region" "current" {
   provider = aws
 }
@@ -10,13 +20,8 @@ data "aws_region" "current" {
 # vpc_zone_identifier in asg identifies where the asg can launch instances
 # vpc_id in target_group places the target group itself in a vpc
 
-# ** the ami data source for amazon linux, to reference
-
-# ** the certificate for the listener
-
 # ** the dns zone
 # *** the cloudwatch log group and relevants for dns query logging
-
 resource "aws_cloudwatch_log_group" "web_server_alb_dns_query_logging" { # OK
   name                        = "/aws/route53/${aws_route53_zone.playing_cloud.name}"
   retention_in_days           = 365
@@ -67,9 +72,7 @@ resource "aws_route53_query_log" "web_server_alb_dns_query_logging" { # OK
 }
 
 # ** the load balancer
-
 # *** the load balancer: main
-
 # Create a new load balancer
 resource "aws_alb" "web_server" { # OK
   name = "web-server"
@@ -88,27 +91,26 @@ resource "aws_alb" "web_server" { # OK
   # security_groups            = [aws_security_group.https_ingress_only_from_cloudfront_egress_all.id]
   subnets = [
     var.web_server_alb_private_subnet_1_id,
-    var.web_server_alb_private_subnet_2_id]
+  var.web_server_alb_private_subnet_2_id]
 
   # TOFIX
-  # InvalidConfigurationRequest: Access Denied for bucket: web-server-logs-source-1. Please check S3bucket permission
-  # access_logs {
-  #   bucket  = var.log_bucket_id
-  #   prefix  = "alb_access_logs"
-  #   enabled = true
-  # }
+  access_logs {
+    bucket  = var.log_bucket_id
+    prefix  = "alb_access_logs"
+    enabled = true
+  }
 
-  # connection_logs {
-  #   bucket  = var.log_bucket_id
-  #   prefix  = "alb_connection_logs"
-  #   enabled = true
-  # }
+  connection_logs {
+    bucket  = var.log_bucket_id
+    prefix  = "alb_connection_logs"
+    enabled = true
+  }
 
-  # health_check_logs {
-  #   bucket  = var.log_bucket_id
-  #   enabled = true
-  #   prefix  = "alb_health_check_logs"
-  # }
+  health_check_logs {
+    bucket  = var.log_bucket_id
+    enabled = true
+    prefix  = "alb_health_check_logs"
+  }
 }
 
 resource "aws_lb_listener_rule" "web_server_alb_secret_header_only" { # OK
@@ -812,7 +814,7 @@ data "aws_iam_policy_document" "aws-waf-logs-web_server_source" { # OK
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
@@ -830,13 +832,13 @@ data "aws_iam_policy_document" "aws-waf-logs-web_server_source" { # OK
   statement {
     sid       = "AWSLogDeliveryAclCheck"
     effect    = "Allow"
-    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_source.arn}"]
+    resources = [aws_s3_bucket.aws-waf-logs-web_server_source.arn]
     actions   = ["s3:GetBucketAcl"]
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
@@ -882,7 +884,7 @@ data "aws_iam_policy_document" "aws-waf-logs-web_server_destination" { # OK
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
@@ -900,13 +902,13 @@ data "aws_iam_policy_document" "aws-waf-logs-web_server_destination" { # OK
   statement {
     sid       = "AWSLogDeliveryAclCheck"
     effect    = "Allow"
-    resources = ["${aws_s3_bucket.aws-waf-logs-web_server_destination.arn}"]
+    resources = [aws_s3_bucket.aws-waf-logs-web_server_destination.arn]
     actions   = ["s3:GetBucketAcl"]
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {

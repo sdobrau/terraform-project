@@ -1,4 +1,15 @@
 # * standard logging v2 for cloudfront distribution
+
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+  }
+  required_version = "~> 1.14"
+}
+
 data "aws_region" "current" {
   provider = aws
 }
@@ -51,19 +62,19 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_source_bucket_notificati
   statement {
     sid       = "Example SNS topic policy"
     effect    = "Allow"
-    resources = ["${aws_sns_topic.aws-waf-logs-cloudfront_source_bucket_notification.arn}"]
+    resources = [aws_sns_topic.aws-waf-logs-cloudfront_source_bucket_notification.arn]
     actions   = ["SNS:Publish"]
 
     condition {
       test     = "ArnLike"
       variable = "aws:SourceArn"
-      values   = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}"]
+      values   = [aws_s3_bucket.aws-waf-logs-cloudfront_source.arn]
     }
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     principals {
@@ -78,19 +89,19 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_destination_bucket_notif
   statement {
     sid       = "Example SNS topic policy"
     effect    = "Allow"
-    resources = ["${aws_sns_topic.aws-waf-logs-cloudfront_destination_bucket_notification.arn}"]
+    resources = [aws_sns_topic.aws-waf-logs-cloudfront_destination_bucket_notification.arn]
     actions   = ["SNS:Publish"]
 
     condition {
       test     = "ArnLike"
       variable = "aws:SourceArn"
-      values   = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}"]
+      values   = [aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn]
     }
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     principals {
@@ -427,7 +438,7 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_source" { # OK
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
@@ -445,13 +456,13 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_source" { # OK
   statement {
     sid       = "AWSLogDeliveryAclCheck"
     effect    = "Allow"
-    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_source.arn}"]
+    resources = [aws_s3_bucket.aws-waf-logs-cloudfront_source.arn]
     actions   = ["s3:GetBucketAcl"]
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
@@ -497,7 +508,7 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_destination" { # OK
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
@@ -515,13 +526,13 @@ data "aws_iam_policy_document" "aws-waf-logs-cloudfront_destination" { # OK
   statement {
     sid       = "AWSLogDeliveryAclCheck"
     effect    = "Allow"
-    resources = ["${aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn}"]
+    resources = [aws_s3_bucket.aws-waf-logs-cloudfront_destination.arn]
     actions   = ["s3:GetBucketAcl"]
 
     condition {
       test     = "StringEquals"
       variable = "aws:SourceAccount"
-      values   = ["${var.aws_source_account_id}"]
+      values   = [var.aws_source_account_id]
     }
 
     condition {
