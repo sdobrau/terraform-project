@@ -238,13 +238,13 @@ resource "aws_s3_bucket_lifecycle_configuration" "web_server_state_destination" 
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_source" {
   bucket = aws_s3_bucket.web_server_state_source.id
-
   rule {
     apply_server_side_encryption_by_default {
       kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
   }
+  bucket_key_enabled = true
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_destination" {
@@ -255,6 +255,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_
       sse_algorithm     = "aws:kms"
     }
   }
+  bucket_key_enabled = true
 }
 # ** the public access block
 resource "aws_s3_bucket_public_access_block" "web_server_state_source" { # OK

@@ -278,6 +278,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-clou
       kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
+    bucket_key_enabled = true
   }
 }
 
@@ -288,6 +289,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "aws-waf-logs-clou
       kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
+    bucket_key_enabled = true
   }
 }
 
