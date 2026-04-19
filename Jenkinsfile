@@ -13,9 +13,6 @@ pipeline {
         AWS_DEFAULT_REGION = "us-east-1"
     }
     agent {
-        node {
-            label 'worker-nodes'
-        }
         dockerfile {
             filename 'Dockerfile'
             dir 'build'
