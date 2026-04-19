@@ -642,86 +642,122 @@ resource "aws_wafv2_web_acl" "cloudfront_no_log4j" { # OK
 
 # * the distribution NOTE: only one required to be in us-east-1
 
-# ** the cache and origin request policy to allow to forward all headers
+# ** the vpc origin with the alb
 
-resource "aws_cloudfront_cache_policy" "cloudfront" {
-  name        = "cloudfront"
-  comment     = "test comment"
-  default_ttl = 50
-  max_ttl     = 100
-  min_ttl     = 1
-  parameters_in_cache_key_and_forwarded_to_origin {
-    cookies_config {
-      cookie_behavior = "whitelist"
-      cookies {
-        items = ["example"]
-      }
-    }
-    headers_config {
-      header_behavior = "whitelist"
-      headers {
-        items = ["example"]
-      }
-    }
-    query_strings_config {
-      query_string_behavior = "whitelist"
-      query_strings {
-        items = ["example"]
-      }
+resource "aws_cloudfront_vpc_origin" "alb" {
+  vpc_origin_endpoint_config {
+    name                   = "alb-origin"
+    arn                    = var.web_server_alb_arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "http-only"
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
     }
   }
 }
 
-resource "aws_cloudfront_origin_request_policy" "cloudfront" {
-  name    = "cloudfront"
-  comment = "example comment"
+# ** the kinesis stream for the log config
 
+resource "aws_kinesis_stream" "cloudfront" {
+  # TODO: kms + permissions
+  name             = "cloudfront"
+  shard_count      = 1
+  retention_period = 48
 
-  headers_config {
-    header_behavior = "allViewer" # forward all headers
+  shard_level_metrics = [
+    "IncomingBytes",
+    "OutgoingBytes",
+  ]
+
+  stream_mode_details {
+    stream_mode = "PROVISIONED"
   }
 
-  # just so the resource works
-  cookies_config {
-    cookie_behavior = "whitelist"
-    cookies {
-      items = ["example"]
+  tags = {
+    Environment = "test"
+  }
+}
+
+# ** the realtime log config
+
+data "aws_iam_policy_document" "cloudfront_assume_role" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudfront.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+resource "aws_iam_role" "cloudfront" {
+  name               = "cloudfront"
+  assume_role_policy = data.aws_iam_policy_document.cloudfront_assume_role.json
+}
+
+data "aws_iam_policy_document" "cloudfront" {
+  statement {
+    effect = "Allow"
+
+    actions = [
+      "kinesis:DescribeStreamSummary",
+      "kinesis:DescribeStream",
+      "kinesis:PutRecord",
+      "kinesis:PutRecords",
+    ]
+
+    resources = [aws_kinesis_stream.cloudfront.arn]
+  }
+}
+
+resource "aws_iam_role_policy" "cloudfront" {
+  name   = "cloudfront"
+  role   = aws_iam_role.cloudfront.id
+  policy = data.aws_iam_policy_document.cloudfront.json
+}
+
+resource "aws_cloudfront_realtime_log_config" "cloudfront" {
+  name          = "cloudfront"
+  sampling_rate = 75
+  fields        = ["timestamp", "c-ip"]
+
+  endpoint {
+    stream_type = "Kinesis"
+
+    kinesis_stream_config {
+      role_arn   = aws_iam_role.cloudfront.arn
+      stream_arn = aws_kinesis_stream.cloudfront.arn
     }
   }
-  query_strings_config {
-    query_string_behavior = "whitelist"
-    query_strings {
-      items = ["example"]
-    }
-  }
+
+  depends_on = [
+    aws_iam_role_policy.cloudfront,
+    aws_kinesis_stream.cloudfront
+  ]
 }
 
 # ** the distribution declaration
-resource "aws_cloudfront_distribution" "cloudfront" {
 
-  # resource "aws_cloudwatch_log_delivery_source" "cloudfront" ^^^
-  # accomplishes CKV_AWS_86
-  # logging_config {
-  #   bucket = var.log_bucket_bucket
-  # }
+resource "aws_cloudfront_distribution" "cloudfront" {
 
   origin {
     domain_name = var.web_server_alb_dns_name
-    # domain_name = "playing-cloud.xyz"
+    vpc_origin_config {
+      vpc_origin_id       = aws_cloudfront_vpc_origin.alb.id
+      origin_read_timeout = 5 # wait 5 seconds for response
+    }
     origin_id = "web_server_origin"
     # Add secret header to all requests to ALB
-    # TOFIX
-    # custom_header {
-    #   name  = "X-Custom-Secret"
-    #   value = var.web_server_cloudfront_secret_value
-    # }
-    # only https
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "https-only" # allow only https
-      origin_ssl_protocols   = ["TLSv1.2"]  # allow TLSv1.2
+    custom_header {
+      name  = "X-Custom-Secret"
+      value = var.web_server_cloudfront_secret_value
     }
+
     # shield
     origin_shield {
       enabled              = true
@@ -741,31 +777,20 @@ resource "aws_cloudfront_distribution" "cloudfront" {
   default_root_object = "index.html" # Modify as needed
 
   default_cache_behavior {
-    # forward Host: headers [all headers]
-    # origin_request_policy_id = aws_cloudfront_origin_request_policy.cloudfront.id
-    # cache_policy_id          = aws_cloudfront_cache_policy.cloudfront.id
 
     # Use managed policy that forwards ALL headers (including Host)
     cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
     origin_request_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3" # AllViewer
 
-    target_origin_id       = "web_server_origin"
-    viewer_protocol_policy = "redirect-to-https" # Change based on your needs
-    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true  # compress Accept-Encoding: gzip
-    default_ttl            = 86400 # 1-day TTL
-    min_ttl                = 0
-    max_ttl                = 31536000 # 1-year TTL
-
-    # If you have specific cache behavior settings
-    # forwarded_values {
-    #   query_string = false
-    #   headers      = ["Authorization"]
-    #   cookies {
-    #     forward = "none" # no cookies required
-    #   }
-    # }
+    target_origin_id        = "web_server_origin"
+    viewer_protocol_policy  = "redirect-to-https" # Change based on your needs
+    allowed_methods         = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods          = ["GET", "HEAD"]
+    compress                = true  # compress Accept-Encoding: gzip
+    default_ttl             = 86400 # 1-day TTL
+    min_ttl                 = 0
+    max_ttl                 = 31536000 # 1-year TTL
+    realtime_log_config_arn = aws_cloudfront_realtime_log_config.cloudfront.arn
   }
 
   viewer_certificate {
@@ -785,6 +810,7 @@ resource "aws_cloudfront_distribution" "cloudfront" {
       locations        = ["US", "CA", "GB", "RO"] # US, Canada, UK, Romania
     }
   }
+
   web_acl_id = aws_wafv2_web_acl.cloudfront_no_log4j.arn
 }
 

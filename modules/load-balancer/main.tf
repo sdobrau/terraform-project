@@ -87,8 +87,8 @@ resource "aws_alb" "web_server" { # OK
   enable_deletion_protection = false # Check: CKV_AWS_150
   # security_groups            = [aws_security_group.https_ingress_only_from_cloudfront_egress_all.id]
   subnets = [
-    var.web_server_alb_public_subnet_1_id,
-  var.web_server_alb_public_subnet_2_id]
+    var.web_server_alb_private_subnet_1_id,
+    var.web_server_alb_private_subnet_2_id]
 
   # TOFIX
   # InvalidConfigurationRequest: Access Denied for bucket: web-server-logs-source-1. Please check S3bucket permission
@@ -119,27 +119,20 @@ resource "aws_lb_listener_rule" "web_server_alb_secret_header_only" { # OK
     type             = "forward" # fwd if secret header found
     target_group_arn = aws_alb_target_group.web_server.arn
   }
+
   condition {
-    http_request_method {
-      values = ["GET"]
+    http_header {
+      http_header_name = "X-Custom-Secret" # if secretheader provided
+      values           = [var.secret_header_value]
     }
   }
-
-  # condition {
-  #   http_header {
-  #     http_header_name = "X-Custom-Secret"
-  #     values           = [var.secret_header_value]
-  #   }
-  # }
 }
 
 # *** the listener
 resource "aws_alb_listener" "web_server" { # OK
   load_balancer_arn                    = aws_alb.web_server.arn
-  port                                 = "443"
-  protocol                             = "HTTPS"
-  ssl_policy                           = "ELBSecurityPolicy-TLS-1-2-2017-01"
-  certificate_arn                      = var.aws_playing_cloud_xyz_certificate_arn
+  port                                 = "80"
+  protocol                             = "HTTP"
   routing_http_response_server_enabled = false # no aws/elb2.0 Server
 
   default_action {
@@ -164,11 +157,11 @@ resource "aws_autoscaling_group" "web_server" { # OK
   # hard dependency on kms key
   name                      = "web_server_asg"
   max_size                  = 3
-  min_size                  = 1
+  min_size                  = 0
   health_check_grace_period = 5
   health_check_type         = "ELB"
   default_cooldown          = 20
-  desired_capacity          = 1
+  desired_capacity          = 0
   wait_for_capacity_timeout = 0 # think
   force_delete              = false
   placement_group           = aws_placement_group.web_server_asg_spread_placement_group.id
@@ -299,7 +292,7 @@ resource "aws_autoscaling_schedule" "web_server_spin_up" { # OK
   max_size               = 3
   min_size               = 1
   desired_capacity       = 1
-  recurrence             = "0 6 * * *" # at 6AM
+  recurrence             = "59 1 * * *" # at 1:59AM
   autoscaling_group_name = aws_autoscaling_group.web_server.name
 }
 
@@ -314,8 +307,8 @@ resource "aws_autoscaling_attachment" "web_server" { # OK
 
 resource "aws_alb_target_group" "web_server" { # OK
   name        = "web-server"
-  port        = 443
-  protocol    = "HTTPS"
+  port        = 80
+  protocol    = "HTTP"
   target_type = "instance"
   vpc_id      = var.web_server_vpc_id # where to create the target group?
 
@@ -323,7 +316,7 @@ resource "aws_alb_target_group" "web_server" { # OK
     path                = "/index.html"
     interval            = 30
     timeout             = 5
-    protocol            = "HTTPS"
+    protocol            = "HTTP"
     healthy_threshold   = 2
     unhealthy_threshold = 2 # if 2 for 30
   }
@@ -353,10 +346,13 @@ resource "aws_security_group" "https_ingress_only_from_cloudfront_egress_all" { 
 resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_cloudfront" { # OK
   security_group_id = aws_security_group.https_ingress_only_from_cloudfront_egress_all.id
   description       = "Allow HTTPS only from cloudfront egress all"
-  from_port         = 443
+  from_port         = 80
   ip_protocol       = "tcp"
-  to_port           = 443
-  prefix_list_id    = "pl-3b927c52"
+  to_port           = 80
+  # need to allow this for cloudfront + vpc origin to work
+  # CloudFront-VPCOrigins-Service-SG
+  referenced_security_group_id = "sg-0e14ff6d4b867e5fc"
+  # prefix_list_id    = "pl-3b927c52"
 }
 
 resource "aws_vpc_security_group_egress_rule" "egress_all" { # OK
@@ -368,37 +364,37 @@ resource "aws_vpc_security_group_egress_rule" "egress_all" { # OK
 
 # *** the ingress/egress for the private instances
 
-resource "aws_security_group" "https_ingress_only_from_public_subnets_egress_all" { # OK
-  name        = "https_ingress_only_from_public_subnets_egress_all"
-  description = "Allow only HTTPS ingress from public subnets egress all"
+resource "aws_security_group" "https_ingress_only_from_private_subnets_egress_all" { # OK
+  name        = "https_ingress_only_from_private_subnets_egress_all"
+  description = "Allow only HTTPS ingress from private subnets egress all"
   vpc_id      = var.web_server_vpc_id
   # lifecycle {
   #   create_before_destroy = true
   # }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_public_subnet_1" { # OK
-  security_group_id = aws_security_group.https_ingress_only_from_public_subnets_egress_all.id
-  description       = "Allow HTTPS only from public subnet 1"
-  from_port         = 443
+resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_private_subnet_1" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_private_subnets_egress_all.id
+  description       = "Allow HTTPS only from private subnet 1"
+  from_port         = 80
   ip_protocol       = "tcp"
-  to_port           = 443
+  to_port           = 80
   cidr_ipv4         = "10.0.0.0/24"
 
 }
 
-resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_private_subnet" { # OK
-  security_group_id = aws_security_group.https_ingress_only_from_public_subnets_egress_all.id
-  description       = "Allow HTTPS only from private subnet itself"
-  from_port         = 443
+resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_private_subnet_2" { # OK
+  security_group_id = aws_security_group.https_ingress_only_from_private_subnets_egress_all.id
+  description       = "Allow HTTPS only from private subnet 2"
+  from_port         = 80
   ip_protocol       = "tcp"
-  to_port           = 443
+  to_port           = 80
   cidr_ipv4         = "10.0.1.0/24"
 }
 
 # NOTE: this is required for ssm to work
 resource "aws_vpc_security_group_egress_rule" "egress_all_2" { # OK
-  security_group_id = aws_security_group.https_ingress_only_from_public_subnets_egress_all.id
+  security_group_id = aws_security_group.https_ingress_only_from_private_subnets_egress_all.id
   description       = "Allow egress all"
   ip_protocol       = "-1"
   cidr_ipv4         = "0.0.0.0/0"
@@ -447,7 +443,7 @@ resource "aws_launch_template" "web_server" { # OK
   network_interfaces {
     associate_public_ip_address = false # private hosts
     subnet_id                   = var.web_server_instances_private_subnet_id
-    security_groups             = [aws_security_group.https_ingress_only_from_public_subnets_egress_all.id]
+    security_groups             = [aws_security_group.https_ingress_only_from_private_subnets_egress_all.id]
   }
 
   placement {
@@ -948,97 +944,4 @@ resource "aws_s3_bucket_policy" "aws-waf-logs-web_server_source" { # OK
 resource "aws_s3_bucket_policy" "aws-waf-logs-web_server_destination" { # OK
   bucket = aws_s3_bucket.aws-waf-logs-web_server_destination.bucket
   policy = data.aws_iam_policy_document.aws-waf-logs-web_server_destination.json
-}
-
-# ***** the web acl as container of rule groups (against log4j)
-
-# Web ACL must use lifecycle.ignore_changes to prevent drift from this resource
-resource "aws_wafv2_web_acl" "web_server_alb_allow_cloudfront_only" { # OK
-  name  = "web_server_alb_allow_cloudfront_only"
-  scope = "REGIONAL"
-  default_action {
-    block {} # unless anything matched, block
-  }
-
-  visibility_config {
-    cloudwatch_metrics_enabled = true
-    metric_name                = "Blocked"
-    sampled_requests_enabled   = true
-  }
-
-  # this rule is for checkov CKV_AWS_192
-  # prevent log4j2 message lookup
-  #
-  rule {
-    name     = "AWS-AWSManagedRulesKnownBadInputsRuleSet"
-    priority = 1
-
-    override_action {
-      none {}
-    }
-
-    statement {
-      managed_rule_group_statement {
-        name        = "AWSManagedRulesKnownBadInputsRuleSet"
-        vendor_name = "AWS"
-      }
-    }
-
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "KnownBadInputMatched"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  rule {
-    name     = "AWSManagedRulesAnonymousIpList"
-    priority = 2
-
-    override_action {
-      count {}
-    }
-
-    statement {
-      managed_rule_group_statement {
-        name        = "AWSManagedRulesAnonymousIpList"
-        vendor_name = "AWS"
-
-        # excluded_rule { suggested by CKV2_AWS_47 but not available
-        #   name = "SizeRestrictions_QUERYSTRING"
-        # }
-
-        scope_down_statement {
-          geo_match_statement {
-            country_codes = ["US", "NL"]
-          }
-        }
-      }
-    }
-
-
-    visibility_config {
-      cloudwatch_metrics_enabled = true
-      metric_name                = "web-server-web-acl"
-      sampled_requests_enabled   = true
-    }
-  }
-
-  lifecycle {
-    ignore_changes = [rule]
-  }
-}
-
-# ***** the logging and bucket
-
-resource "aws_wafv2_web_acl_logging_configuration" "aws-waf-logs-web_server" {
-  log_destination_configs = [aws_s3_bucket.aws-waf-logs-web_server_source.arn]
-  resource_arn            = aws_wafv2_web_acl.web_server_alb_allow_cloudfront_only.arn
-}
-
-# ***** the association with the load balancer
-
-resource "aws_wafv2_web_acl_association" "web_server" {
-  resource_arn = aws_alb.web_server.arn
-  web_acl_arn  = aws_wafv2_web_acl.web_server_alb_allow_cloudfront_only.arn
 }

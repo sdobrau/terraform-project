@@ -43,13 +43,13 @@ variable "log_bucket_id" {
   type        = string
 }
 
-variable "web_server_alb_public_subnet_1_id" {
-  description = "ID of the subnet that is public facing, where the ALB is placed"
+variable "web_server_alb_private_subnet_1_id" {
+  description = "ID of the subnet that is private facing, where the ALB is placed"
   type        = string
 }
 
-variable "web_server_alb_public_subnet_2_id" {
-  description = "ID of the subnet that is public facing, where the ALB is placed"
+variable "web_server_alb_private_subnet_2_id" {
+  description = "ID of the subnet that is private facing, where the ALB is placed"
   type        = string
 }
 

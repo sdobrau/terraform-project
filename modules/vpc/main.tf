@@ -99,31 +99,44 @@ resource "aws_flow_log" "web_server" { # OK
   vpc_id               = aws_vpc.web_server.id
 }
 
-# ** the public subnet for the elb
-resource "aws_subnet" "web_server_alb_public_1" { # OK
+# ** the private subnets for the elb
+resource "aws_subnet" "web_server_alb_private_1" { # OK
   vpc_id                  = aws_vpc.web_server.id
   cidr_block              = "10.0.0.0/24"
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = false # instances in this subnet get an ip
+
+  tags = {
+    Name = "web_server_alb_private_1"
+  }
+}
+
+resource "aws_subnet" "web_server_alb_private_2" { # OK
+  vpc_id                  = aws_vpc.web_server.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = false # instances in this subnet get an ip
+
+  tags = {
+    Name = "web_server_alb_private_2"
+  }
+}
+
+# ** the public subnet for the nat gateway + internet gateway
+
+resource "aws_subnet" "web_server_public" { # OK
+  vpc_id                  = aws_vpc.web_server.id
+  cidr_block              = "10.0.3.0/24"
   availability_zone       = "us-east-1a"
   map_public_ip_on_launch = true # instances in this subnet get an ip
 
   tags = {
-    Name = "web_server_alb_public_1"
-  }
-}
-
-resource "aws_subnet" "web_server_alb_public_2" { # OK
-  vpc_id                  = aws_vpc.web_server.id
-  cidr_block              = "10.0.1.0/24"
-  availability_zone       = "us-east-1b"
-  map_public_ip_on_launch = true # instances in this subnet get an ip
-
-  tags = {
-    Name = "web_server_alb_public_2"
+    Name = "web_server_public"
   }
 }
 
 # ** the internet gateway for the elb
-resource "aws_internet_gateway" "web_server_alb_public" { # OK
+resource "aws_internet_gateway" "web_server_public" { # OK
   vpc_id = aws_vpc.web_server.id
   tags = {
     Name = "web_server"
@@ -131,30 +144,24 @@ resource "aws_internet_gateway" "web_server_alb_public" { # OK
 }
 
 # ** the routing table and association to the public subnet
-resource "aws_route_table" "web_server_alb_public" { # OK
+resource "aws_route_table" "web_server_public" { # OK
   vpc_id = aws_vpc.web_server.id
   tags = {
-    Name = "web_server_alb_public"
+    Name = "web_server"
   }
 }
 
 # ** the route
 resource "aws_route" "web_server_all_internet" { # OK
-  route_table_id         = aws_route_table.web_server_alb_public.id
+  route_table_id         = aws_route_table.web_server_public.id
   destination_cidr_block = "0.0.0.0/0" # Any destination
-  gateway_id             = aws_internet_gateway.web_server_alb_public.id
+  gateway_id             = aws_internet_gateway.web_server_public.id
 }
 
-# ** associate to subnets
-resource "aws_route_table_association" "web_server_alb_public_1" { # OK
-  subnet_id      = aws_subnet.web_server_alb_public_1.id
-  route_table_id = aws_route_table.web_server_alb_public.id
-}
-
-# ** associate to subnet
-resource "aws_route_table_association" "web_server_alb_public_2" { # OK
-  subnet_id      = aws_subnet.web_server_alb_public_2.id
-  route_table_id = aws_route_table.web_server_alb_public.id
+# ** associate to one public subnet
+resource "aws_route_table_association" "web_server" { # OK
+  subnet_id      = aws_subnet.web_server_public.id
+  route_table_id = aws_route_table.web_server_public.id
 }
 
 # ** private subnet for the asg
@@ -170,7 +177,7 @@ resource "aws_subnet" "web_server_instances_private" { # OK
   }
 }
 
-# ** network acl for private subnet
+# ** network acl for private subnets
 
 resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
   vpc_id = aws_vpc.web_server.id
@@ -195,6 +202,7 @@ resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
   #   to_port    = 443
   # }
 
+  # TOFIX: strengthen
   egress {
     rule_no    = 3
     protocol   = "-1"
@@ -217,6 +225,7 @@ resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
     Name = "main"
   }
 }
+
 
 # ** vpc interface endpoint configuration for SSM, so private instances can conn
 # as in
@@ -303,17 +312,17 @@ resource "aws_route" "web_server_instances_private_0_to_nat_gateway" { # OK
 
 #checkov:skip=CKV2_AWS_19:EIP is allocated to NAT gateway
 resource "aws_eip" "for_nat_gateway" { # OK
-  depends_on = [aws_internet_gateway.web_server_alb_public]
+  depends_on = [aws_internet_gateway.web_server_public]
 }
 
 resource "aws_nat_gateway" "for_web_server_private_subnet" { # OK
   allocation_id = aws_eip.for_nat_gateway.id
-  subnet_id     = aws_subnet.web_server_alb_public_1.id
+  subnet_id     = aws_subnet.web_server_public.id
 
   tags = {
     Name = "for_web_server_private_subnet"
   }
   # To ensure proper ordering, it is recommended to add an explicit dependency
   # on the Internet Gateway for the VPC.
-  depends_on = [aws_internet_gateway.web_server_alb_public]
+  depends_on = [aws_internet_gateway.web_server_public]
 }
