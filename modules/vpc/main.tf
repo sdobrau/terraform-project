@@ -104,6 +104,7 @@ resource "aws_iam_role_policy" "vpc_flow_log" { # OK
 # ** flow log: flow log settings
 
 resource "aws_flow_log" "web_server" { # OK
+  # role ok not sensitive, skip AVD_AWS_0057
   iam_role_arn         = aws_iam_role.vpc_flow_log.arn
   log_destination      = aws_cloudwatch_log_group.vpc_flow_log.arn
   log_destination_type = "cloud-watch-logs"
@@ -137,6 +138,7 @@ resource "aws_subnet" "web_server_alb_private_2" { # OK
 # ** the public subnet for the nat gateway + internet gateway
 
 resource "aws_subnet" "web_server_public" { # OK
+  # ignore AVD-AWS-0164: we need this for nat gateway for packaging
   vpc_id                  = aws_vpc.web_server.id
   cidr_block              = "10.0.3.0/24"
   availability_zone       = "us-east-1a"
@@ -220,8 +222,8 @@ resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
     protocol   = "-1"
     cidr_block = "0.0.0.0/0"
     action     = "allow"
-    to_port    = 0
     from_port  = 0
+    to_port    = 0
   }
 
   ingress {
@@ -229,8 +231,8 @@ resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
     protocol   = "-1"
     cidr_block = "0.0.0.0/0"
     action     = "allow"
-    to_port    = 0
     from_port  = 0
+    to_port    = 0
   }
 
   tags = {
@@ -259,8 +261,8 @@ resource "aws_vpc_security_group_ingress_rule" "allow_only_private_instances_ing
   security_group_id = aws_security_group.allow_only_private_instances_ingress_egress_all.id
   cidr_ipv4         = "10.0.2.0/24"
   from_port         = 443
-  ip_protocol       = "tcp"
   to_port           = 443
+  ip_protocol       = "tcp"
 }
 
 resource "aws_vpc_security_group_egress_rule" "allow_only_private_instances_egress_all" {

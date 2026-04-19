@@ -113,6 +113,8 @@ module "cloudfront" {
 
   log_bucket_arn    = module.bucket-log.log_bucket.arn
   log_bucket_bucket = module.bucket-log.log_bucket.bucket
+  # TODO:
+  log_domain_name_domain_name = module.bucket-log.log_bucket.bucket_domain_name
 
   web_server_alb_arn                 = module.load-balancer.web_server_alb_arn
   web_server_alb_dns_name            = module.load-balancer.web_server_alb_dns_name

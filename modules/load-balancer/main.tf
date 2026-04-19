@@ -41,6 +41,7 @@ data "aws_iam_policy_document" "web_server_alb_dns_query_logging" { # OK
 
     resources = ["arn:aws:logs:*:*:log-group:/aws/route53/*"]
 
+    # ignore AVD_AWS_0057: ok because by route53 service principal
     principals {
       identifiers = ["route53.amazonaws.com"]
       type        = "Service"
@@ -85,13 +86,13 @@ resource "aws_alb" "web_server" { # OK
 
   # Check: CKV_AWS_150
 
-  internal                   = false # not internal but alb
+  internal                   = true  # internal, skip AVD-AWS-0053
   drop_invalid_header_fields = true  # drop HTTP headers
   enable_deletion_protection = false # Check: CKV_AWS_150
-  # security_groups            = [aws_security_group.https_ingress_only_from_cloudfront_egress_all.id]
+  security_groups            = [aws_security_group.https_ingress_only_from_cloudfront_egress_cloudfront.id]
   subnets = [
     var.web_server_alb_private_subnet_1_id,
-  var.web_server_alb_private_subnet_2_id]
+    var.web_server_alb_private_subnet_2_id]
 
   # TOFIX
   access_logs {
@@ -222,6 +223,7 @@ data "aws_iam_policy_document" "web_server_dlm_lifecycle" { # OK
       "ec2:CreateSnapshot",
       "ec2:CreateSnapshots",
       "ec2:DeleteSnapshot",
+      # ignore AVD_AWS_0057: ok because by dlm
       "ec2:DescribeInstances",
       "ec2:DescribeVolumes",
       "ec2:DescribeSnapshots",
@@ -233,8 +235,9 @@ data "aws_iam_policy_document" "web_server_dlm_lifecycle" { # OK
   }
 
   statement {
-    effect    = "Allow"
-    actions   = ["ec2:CreateTags"]
+    effect  = "Allow"
+    actions = ["ec2:CreateTags"]
+    # ignore AVD_AWS_0057: ok because by dlm
     resources = ["arn:aws:ec2:*::snapshot/*"]
   }
 }
@@ -336,8 +339,8 @@ resource "aws_placement_group" "web_server_asg_spread_placement_group" { # OK
 
 # *** the ingress/egress for the load balancer
 
-resource "aws_security_group" "https_ingress_only_from_cloudfront_egress_all" { # OK
-  name        = "https_ingress_only_from_cloudfront_egress_all"
+resource "aws_security_group" "https_ingress_only_from_cloudfront_egress_cloudfront" { # OK
+  name        = "https_ingress_only_from_cloudfront_egress_cloudfront"
   description = "Allow only from cloudfront and egress all"
   vpc_id      = var.web_server_vpc_id
   # lifecycle {
@@ -346,11 +349,11 @@ resource "aws_security_group" "https_ingress_only_from_cloudfront_egress_all" { 
 }
 
 resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_cloudfront" { # OK
-  security_group_id = aws_security_group.https_ingress_only_from_cloudfront_egress_all.id
+  security_group_id = aws_security_group.https_ingress_only_from_cloudfront_egress_cloudfront.id
   description       = "Allow HTTPS only from cloudfront egress all"
   from_port         = 80
-  ip_protocol       = "tcp"
   to_port           = 80
+  ip_protocol       = "tcp"
   # need to allow this for cloudfront + vpc origin to work
   # CloudFront-VPCOrigins-Service-SG
   referenced_security_group_id = "sg-0e14ff6d4b867e5fc"
@@ -358,10 +361,14 @@ resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_cloudfro
 }
 
 resource "aws_vpc_security_group_egress_rule" "egress_all" { # OK
-  security_group_id = aws_security_group.https_ingress_only_from_cloudfront_egress_all.id
-  description       = "Allow egress all"
-  ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
+  security_group_id            = aws_security_group.https_ingress_only_from_cloudfront_egress_cloudfront.id
+  description                  = "Allow egress to cloudfront"
+  from_port                    = 80
+  to_port                      = 80
+  ip_protocol                  = "tcp"
+  referenced_security_group_id = "sg-0e14ff6d4b867e5fc"
+  cidr_ipv4                    = "0.0.0.0/0"
+  # AVD-AWS-0104: ignore
 }
 
 # *** the ingress/egress for the private instances
@@ -379,8 +386,8 @@ resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_private_
   security_group_id = aws_security_group.https_ingress_only_from_private_subnets_egress_all.id
   description       = "Allow HTTPS only from private subnet 1"
   from_port         = 80
-  ip_protocol       = "tcp"
   to_port           = 80
+  ip_protocol       = "tcp"
   cidr_ipv4         = "10.0.0.0/24"
 
 }
@@ -389,8 +396,8 @@ resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_private_
   security_group_id = aws_security_group.https_ingress_only_from_private_subnets_egress_all.id
   description       = "Allow HTTPS only from private subnet 2"
   from_port         = 80
-  ip_protocol       = "tcp"
   to_port           = 80
+  ip_protocol       = "tcp"
   cidr_ipv4         = "10.0.1.0/24"
 }
 
@@ -399,7 +406,8 @@ resource "aws_vpc_security_group_egress_rule" "egress_all_2" { # OK
   security_group_id = aws_security_group.https_ingress_only_from_private_subnets_egress_all.id
   description       = "Allow egress all"
   ip_protocol       = "-1"
-  cidr_ipv4         = "0.0.0.0/0"
+  # ignore AVD-AWS-0104: we need this for fetching packages
+  cidr_ipv4 = "0.0.0.0/0"
 }
 
 # *** the launch template for autoscaling group

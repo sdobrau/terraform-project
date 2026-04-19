@@ -283,13 +283,20 @@ resource "aws_s3_bucket" "web_server_state_source" { # OK
   force_destroy = true
 
   # required for load balancer access logs
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        sse_algorithm = "AES256"
-      }
+  rule {
+    apply_server_side_encryption_by_default {
+      kms_master_key_id = var.adminaccount_web_key_arn
+      sse_algorithm     = "aws:kms"
     }
+    bucket_key_enabled = true
   }
+  # server_side_encryption_configuration {
+  #   rule {
+  #     apply_server_side_encryption_by_default {
+  #       sse_algorithm = "AES256"
+  #     }
+  #   }
+  # }
 
 }
 

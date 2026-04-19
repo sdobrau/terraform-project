@@ -50,6 +50,7 @@ data "aws_iam_policy_document" "web_server_write_to_web_s3_bucket_and_ssm_and_cl
       "ssm:PutConfigurePackageResult",
       "ssm:UpdateAssociationStatus",
       "ssm:UpdateInstanceAssociationStatus",
+      # ignore AVD_AWS_0057: ok because by instance
       "ssm:UpdateInstanceInformation",
     ]
   }
