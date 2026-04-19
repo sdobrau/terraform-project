@@ -5,19 +5,18 @@ pipeline {
                description: "Terraform version to download")
     }
     environment {
-        TERRAFORM_VERSION = "${params.TERRAFORM_VERSION}" // pass this as env
         TF_AWS_EXPERIMENT_dynamodb_global_secondary_index = "1"
-        GH_TOKEN = credentials('gh_token')
-        AWS_ACCESS_KEY_ID = "${params.AWS_ACCESS_KEY_ID}"
+        AWS_ACCESS_KEY_ID = credentials("AWS_ACCESS_KEY_ID")
         AWS_SECRET_ACCESS_KEY = credentials('AWS_SECRET_ACCESS_KEY')
         AWS_DEFAULT_REGION = "us-east-1"
     }
     agent {
-        dockerfile {
-            filename 'Dockerfile'
-            dir 'build'
+        docker {
+            image 'sdobrau/terraform-ci:2026_19_04'
             label 'worker-docker'
-            additionalBuildArgs '--build-arg PRODUCT=terraform --build-arg VERSION=${TERRAFORM_VERSION} --build-arg GH_TOKEN=${GH_TOKEN}'
+            registryUrl 'https://ghcr.io'
+            registryCredentialsId 'ghcr_credentials'
+            alwaysPull true
         }
     }
     options {
@@ -40,6 +39,11 @@ pipeline {
                 sh 'clamscan --recursive .'
             }
         }
+        stage('TerraformInit') {
+            steps {
+                sh 'terraform init'
+            }
+        }
         stage ('TerraformValidate') {
             steps {
                 sh 'terraform validate'
@@ -57,11 +61,12 @@ pipeline {
                 sh 'tflint --recursive'
             }
         }
-        stage('Checkov') {
-            steps {
-                sh 'checkov --quiet --skip-resources-without-violations -d .'
-            }
-        }
+        // TODO: setup
+        // stage('Checkov') {
+        //     steps {
+        //         sh 'checkov --quiet --skip-resources-without-violations -d .'
+        //     }
+        // }
         stage('TrivyConfig') {
             steps {
                 sh 'trivy config --report summary .'
@@ -77,7 +82,7 @@ pipeline {
             steps {
                 sh "go mod init ${env.GIT_URL}"
                 sh 'go mod tidy'
-                sh 'cd test'
+                sh 'cd tests'
                 sh 'go test -v -timeout 10m'
             }
         }
@@ -92,20 +97,20 @@ pipeline {
             }
         }
     }
-    post {
-        always {
-            ircNotify targets: "sdobrau #jenkins-room", customMessage:
-            "${env.JOB_NAME} run"
-        }
-        success {
-            ircNotify targets: "sdobrau #jenkins-room", customMessage:
-            "${env.JOB_NAME} successfully built"
-        }
-        failure {
-            ircNotify targets: "sdobrau #jenkins-room", customMessage:
-            "${env.JOB_NAME} successfully built"
-            ircNotify targets: "sdobrau #jenkins-room", customMessage:
-            "${env.JOB_NAME} failed to build"
-        }
-    }
+    // post {
+    //     always {
+    //         ircNotify targets: "sdobrau #jenkins-room", customMessage:
+    //         "${env.JOB_NAME} run"
+    //     }
+    //     success {
+    //         ircNotify targets: "sdobrau #jenkins-room", customMessage:
+    //         "${env.JOB_NAME} successfully built"
+    //     }
+    //     failure {
+    //         ircNotify targets: "sdobrau #jenkins-room", customMessage:
+    //         "${env.JOB_NAME} successfully built"
+    //         ircNotify targets: "sdobrau #jenkins-room", customMessage:
+    //         "${env.JOB_NAME} failed to build"
+    //     }
+    // }
 }
