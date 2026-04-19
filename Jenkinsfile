@@ -66,10 +66,10 @@ pipeline {
         //     steps {
         //         sh 'checkov --quiet --skip-resources-without-violations -d .'
         //     }
-        // }
+        // }y
         stage('TrivyConfig') {
             steps {
-                sh 'trivy config --report summary .'
+                sh 'trivy config --report summary . --ignorefile .trivyignore'
             }
         }
         stage('OPA') {

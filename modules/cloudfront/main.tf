@@ -14,6 +14,7 @@ data "aws_region" "current" {
   provider = aws
 }
 
+# vv require cloudfront distribution to be created first
 resource "aws_cloudwatch_log_delivery_source" "cloudfront" { # OK
   name = "cloudfront"
   #checkov:skip=CKV_AWS_86:Access logging is configured for Cloudfront w/
@@ -691,7 +692,7 @@ resource "aws_kinesis_stream" "cloudfront" {
   }
 
   encryption_type = "KMS"
-  kms_key_id      = var.adminaccount_web_key.id
+  kms_key_id      = var.adminaccount_web_key_id
 }
 
 # ** the realtime log config
@@ -806,13 +807,6 @@ resource "aws_cloudfront_distribution" "cloudfront" {
     max_ttl                 = 31536000 # 1-year TTL
     realtime_log_config_arn = aws_cloudfront_realtime_log_config.cloudfront.arn
   }
-
-  # TODO: check parquet access logs
-  # logging_config {
-  #   include_cookies = false
-  #   bucket          = log_bucket_domain_name
-  #   prefix          = "cloudfront-access-logs"
-  # }
 
   viewer_certificate {
     cloudfront_default_certificate = false

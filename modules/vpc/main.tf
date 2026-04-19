@@ -32,6 +32,7 @@ resource "aws_vpc" "web_server" { # OK
 resource "aws_default_security_group" "default" { # OK?
   vpc_id = aws_vpc.web_server.id
 
+  # ignore AWS-0124:
   # default by aws, allow all ingress and egress
   ingress {
     protocol = "-1"

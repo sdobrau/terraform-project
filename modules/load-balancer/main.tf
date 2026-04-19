@@ -360,15 +360,14 @@ resource "aws_vpc_security_group_ingress_rule" "https_ingress_only_from_cloudfro
   # prefix_list_id    = "pl-3b927c52"
 }
 
-resource "aws_vpc_security_group_egress_rule" "egress_all" { # OK
+resource "aws_vpc_security_group_egress_rule" "egress_to_cloudfront" { # OK
   security_group_id            = aws_security_group.https_ingress_only_from_cloudfront_egress_cloudfront.id
   description                  = "Allow egress to cloudfront"
   from_port                    = 80
   to_port                      = 80
   ip_protocol                  = "tcp"
   referenced_security_group_id = "sg-0e14ff6d4b867e5fc"
-  cidr_ipv4                    = "0.0.0.0/0"
-  # AVD-AWS-0104: ignore
+  # AVD-AWS-0104: ignore, fixed
 }
 
 # *** the ingress/egress for the private instances

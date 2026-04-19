@@ -243,8 +243,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_
       kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
+    bucket_key_enabled = true
   }
-  bucket_key_enabled = true
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_destination" {
@@ -254,8 +254,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "web_server_state_
       kms_master_key_id = var.adminaccount_web_key_arn
       sse_algorithm     = "aws:kms"
     }
+    bucket_key_enabled = true
   }
-  bucket_key_enabled = true
 }
 # ** the public access block
 resource "aws_s3_bucket_public_access_block" "web_server_state_source" { # OK
@@ -282,14 +282,6 @@ resource "aws_s3_bucket" "web_server_state_source" { # OK
   bucket        = "web-server-state-source-2"
   force_destroy = true
 
-  # required for load balancer access logs
-  rule {
-    apply_server_side_encryption_by_default {
-      kms_master_key_id = var.adminaccount_web_key_arn
-      sse_algorithm     = "aws:kms"
-    }
-    bucket_key_enabled = true
-  }
   # server_side_encryption_configuration {
   #   rule {
   #     apply_server_side_encryption_by_default {
@@ -297,22 +289,11 @@ resource "aws_s3_bucket" "web_server_state_source" { # OK
   #     }
   #   }
   # }
-
 }
 
 resource "aws_s3_bucket" "web_server_state_destination" { # OK
   bucket        = "web-server-state-destination-2"
   force_destroy = true
-
-  # required for load balancer access logs
-  server_side_encryption_configuration {
-    rule {
-      apply_server_side_encryption_by_default {
-        sse_algorithm = "AES256"
-      }
-    }
-  }
-
 }
 
 # ** the iam policy that contains requirements for the state file
