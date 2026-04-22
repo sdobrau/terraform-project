@@ -9,3 +9,11 @@ output "web_server_alb_arn" {
 output "web_server_alb_dns_name" {
   value = aws_alb.web_server.dns_name
 }
+
+output "web_server_alb_2_arn" {
+  value = aws_alb.web_server.arn
+}
+
+output "web_server_alb_2_dns_name" {
+  value = aws_alb.web_server.dns_name
+}

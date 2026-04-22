@@ -43,8 +43,23 @@ variable "web_server_alb_private_subnet_2_id" {
   type        = string
 }
 
+variable "web_server_alb_2_private_subnet_1_id" {
+  description = "ID of the subnet that is private facing, where the ALB is placed"
+  type        = string
+}
+
+variable "web_server_alb_2_private_subnet_2_id" {
+  description = "ID of the subnet that is private facing, where the ALB is placed"
+  type        = string
+}
+
 variable "web_server_instances_private_subnet_id" {
   description = "ID of the private subnet for the web server ASG"
+  type        = string
+}
+
+variable "web_server_instances_private_subnet_2_id" {
+  description = "ID of the private subnet for the 2nd web server ASG"
   type        = string
 }
 

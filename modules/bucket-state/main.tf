@@ -282,13 +282,6 @@ resource "aws_s3_bucket" "web_server_state_source" { # OK
   bucket        = "web-server-state-source-2"
   force_destroy = true
 
-  # server_side_encryption_configuration {
-  #   rule {
-  #     apply_server_side_encryption_by_default {
-  #       sse_algorithm = "AES256"
-  #     }
-  #   }
-  # }
 }
 
 resource "aws_s3_bucket" "web_server_state_destination" { # OK

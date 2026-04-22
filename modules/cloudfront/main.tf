@@ -674,8 +674,22 @@ resource "aws_cloudfront_vpc_origin" "alb" {
   }
 }
 
-# ** the kinesis stream for the log config
+resource "aws_cloudfront_vpc_origin" "alb_2" {
+  vpc_origin_endpoint_config {
+    name                   = "alb-2-origin"
+    arn                    = var.web_server_alb_2_arn
+    http_port              = 80
+    https_port             = 443
+    origin_protocol_policy = "http-only"
+    origin_ssl_protocols {
+      items    = ["TLSv1.2"]
+      quantity = 1
+    }
+  }
+}
 
+
+# ** the kinesis stream for the log config
 resource "aws_kinesis_stream" "cloudfront" {
   # TODO: kms + permissions
   name             = "cloudfront"
@@ -696,7 +710,6 @@ resource "aws_kinesis_stream" "cloudfront" {
 }
 
 # ** the realtime log config
-
 data "aws_iam_policy_document" "cloudfront_assume_role" {
   statement {
     effect = "Allow"
@@ -757,16 +770,16 @@ resource "aws_cloudfront_realtime_log_config" "cloudfront" {
 }
 
 # ** the distribution declaration
-
 resource "aws_cloudfront_distribution" "cloudfront" {
 
+  # first origin
   origin {
     domain_name = var.web_server_alb_dns_name
     vpc_origin_config {
       vpc_origin_id       = aws_cloudfront_vpc_origin.alb.id
       origin_read_timeout = 5 # wait 5 seconds for response
     }
-    origin_id = "web_server_origin"
+    origin_id = "web-server-origin"
     # Add secret header to all requests to ALB
     custom_header {
       name  = "X-Custom-Secret"
@@ -780,6 +793,42 @@ resource "aws_cloudfront_distribution" "cloudfront" {
     }
   }
 
+  # second origin
+  origin {
+    domain_name = var.web_server_alb_2_dns_name
+    vpc_origin_config {
+      vpc_origin_id       = aws_cloudfront_vpc_origin.alb_2.id
+      origin_read_timeout = 5 # wait 5 seconds for response
+    }
+    origin_id = "web-server-2-origin"
+    # Add secret header to all requests to ALB
+    custom_header {
+      name  = "X-Custom-Secret"
+      value = var.web_server_cloudfront_secret_value
+    }
+
+    # shield
+    origin_shield {
+      enabled              = true
+      origin_shield_region = "us-east-1" # not available in eu-north-1
+    }
+  }
+
+  origin_group {
+    origin_id = "cloudfront-web-servers-origin-group"
+
+    failover_criteria {
+      status_codes = [403, 404, 500, 502]
+    }
+
+    member {
+      origin_id = "web-server-origin"
+    }
+
+    member {
+      origin_id = "web-server-2-origin"
+    }
+  }
   custom_error_response {
     error_code         = "504"
     response_code      = "504"
@@ -797,9 +846,9 @@ resource "aws_cloudfront_distribution" "cloudfront" {
     cache_policy_id          = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad" # CachingDisabled
     origin_request_policy_id = "216adef6-5c7f-47e4-b989-5492eafa07d3" # AllViewer
 
-    target_origin_id        = "web_server_origin"
+    target_origin_id        = "cloudfront-web-servers-origin-group"
     viewer_protocol_policy  = "redirect-to-https" # Change based on your needs
-    allowed_methods         = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    allowed_methods         = ["GET", "HEAD", "OPTIONS"]
     cached_methods          = ["GET", "HEAD"]
     compress                = true  # compress Accept-Encoding: gzip
     default_ttl             = 86400 # 1-day TTL

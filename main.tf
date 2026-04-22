@@ -82,10 +82,16 @@ module "load-balancer" {
   log_bucket_bucket = module.bucket-log.log_bucket.bucket
   log_bucket_id     = module.bucket-log.log_bucket.id
 
-  web_server_vpc_id                      = module.vpc.web_server_vpc_id
-  web_server_instances_private_subnet_id = module.vpc.web_server_instances_private_subnet.id
-  web_server_alb_private_subnet_1_id     = module.vpc.web_server_alb_private_subnet_1.id
-  web_server_alb_private_subnet_2_id     = module.vpc.web_server_alb_private_subnet_2.id
+  web_server_vpc_id = module.vpc.web_server_vpc_id
+
+  web_server_instances_private_subnet_id   = module.vpc.web_server_instances_private_subnet.id
+  web_server_instances_private_subnet_2_id = module.vpc.web_server_instances_private_subnet_2.id
+
+  web_server_alb_private_subnet_1_id = module.vpc.web_server_alb_private_subnet_1.id
+  web_server_alb_private_subnet_2_id = module.vpc.web_server_alb_private_subnet_2.id
+
+  web_server_alb_2_private_subnet_1_id = module.vpc.web_server_alb_2_private_subnet_1.id
+  web_server_alb_2_private_subnet_2_id = module.vpc.web_server_alb_2_private_subnet_2.id
 
   secret_header_value = "TestingValue"
 }
@@ -114,8 +120,12 @@ module "cloudfront" {
   log_bucket_arn    = module.bucket-log.log_bucket.arn
   log_bucket_bucket = module.bucket-log.log_bucket.bucket
 
-  web_server_alb_arn                 = module.load-balancer.web_server_alb_arn
-  web_server_alb_dns_name            = module.load-balancer.web_server_alb_dns_name
+  web_server_alb_arn      = module.load-balancer.web_server_alb_arn
+  web_server_alb_dns_name = module.load-balancer.web_server_alb_dns_name
+
+  web_server_alb_2_arn      = module.load-balancer.web_server_alb_2_arn
+  web_server_alb_2_dns_name = module.load-balancer.web_server_alb_2_dns_name
+
   web_server_cloudfront_secret_value = "TestingValue"
 }
 

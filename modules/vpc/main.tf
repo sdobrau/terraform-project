@@ -27,7 +27,6 @@ resource "aws_vpc" "web_server" { # OK
 }
 
 # ** the default security group disallowing all inbound allow all outbound
-
 # sg-08ceb13e3022ef0c9
 resource "aws_default_security_group" "default" { # OK?
   vpc_id = aws_vpc.web_server.id
@@ -51,7 +50,6 @@ resource "aws_default_security_group" "default" { # OK?
 }
 
 # ** flow log: cloudwatch log group for flow logs
-
 resource "aws_cloudwatch_log_group" "vpc_flow_log" { # OK
   name                        = "vpc_flow_log"
   retention_in_days           = 365
@@ -61,7 +59,6 @@ resource "aws_cloudwatch_log_group" "vpc_flow_log" { # OK
 }
 
 # ** flow log: permissions
-
 data "aws_iam_policy_document" "vpc_flow_log_assume_role" { # OK
   statement {
     effect = "Allow"
@@ -103,7 +100,6 @@ resource "aws_iam_role_policy" "vpc_flow_log" { # OK
 }
 
 # ** flow log: flow log settings
-
 resource "aws_flow_log" "web_server" { # OK
   # role ok not sensitive, skip AVD_AWS_0057
   iam_role_arn         = aws_iam_role.vpc_flow_log.arn
@@ -136,8 +132,30 @@ resource "aws_subnet" "web_server_alb_private_2" { # OK
   }
 }
 
-# ** the public subnet for the nat gateway + internet gateway
+# ** the private subnets for the 2nd alb
+resource "aws_subnet" "web_server_alb_2_private_1" { # OK
+  vpc_id                  = aws_vpc.web_server.id
+  cidr_block              = "10.0.4.0/24"
+  availability_zone       = "us-east-1c"
+  map_public_ip_on_launch = false # instances in this subnet get an ip
 
+  tags = {
+    Name = "web_server_alb_2_private_1"
+  }
+}
+
+resource "aws_subnet" "web_server_alb_2_private_2" { # OK
+  vpc_id                  = aws_vpc.web_server.id
+  cidr_block              = "10.0.5.0/24"
+  availability_zone       = "us-east-1d"
+  map_public_ip_on_launch = false # instances in this subnet get an ip
+
+  tags = {
+    Name = "web_server_alb_2_private_2"
+  }
+}
+
+# ** the public subnet for the nat gateway + internet gateway
 resource "aws_subnet" "web_server_public" { # OK
   # ignore AVD-AWS-0164: we need this for nat gateway for packaging
   vpc_id                  = aws_vpc.web_server.id
@@ -150,11 +168,22 @@ resource "aws_subnet" "web_server_public" { # OK
   }
 }
 
-# ** the internet gateway for the elb
 resource "aws_internet_gateway" "web_server_public" { # OK
   vpc_id = aws_vpc.web_server.id
   tags = {
     Name = "web_server"
+  }
+}
+# ** the public subnet for the 2nd alb nat gateway
+resource "aws_subnet" "web_server_public_2" { # OK
+  # ignore AVD-AWS-0164: we need this for nat gateway for packaging
+  vpc_id                  = aws_vpc.web_server.id
+  cidr_block              = "10.0.7.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true # instances in this subnet get an ip
+
+  tags = {
+    Name = "web_server_public_2"
   }
 }
 
@@ -166,6 +195,13 @@ resource "aws_route_table" "web_server_public" { # OK
   }
 }
 
+resource "aws_route_table" "web_server_public_2" { # OK
+  vpc_id = aws_vpc.web_server.id
+  tags = {
+    Name = "web_server_2"
+  }
+}
+
 # ** the route
 resource "aws_route" "web_server_all_internet" { # OK
   route_table_id         = aws_route_table.web_server_public.id
@@ -173,13 +209,25 @@ resource "aws_route" "web_server_all_internet" { # OK
   gateway_id             = aws_internet_gateway.web_server_public.id
 }
 
-# ** associate to one public subnet
+resource "aws_route" "web_server_all_internet_2" { # OK
+  route_table_id         = aws_route_table.web_server_public_2.id
+  destination_cidr_block = "0.0.0.0/0" # Any destination
+  gateway_id             = aws_internet_gateway.web_server_public.id
+}
+
+# ** associate to both public subnets
 resource "aws_route_table_association" "web_server" { # OK
   subnet_id      = aws_subnet.web_server_public.id
   route_table_id = aws_route_table.web_server_public.id
 }
 
-# ** private subnet for the asg
+resource "aws_route_table_association" "web_server_2" { # OK
+  subnet_id = aws_subnet.web_server_public_2.id
+  # same internet gateway
+  route_table_id = aws_route_table.web_server_public_2.id
+}
+
+# ** private subnets for the asgs
 resource "aws_subnet" "web_server_instances_private" { # OK
   vpc_id     = aws_vpc.web_server.id
   cidr_block = "10.0.2.0/24"
@@ -192,8 +240,20 @@ resource "aws_subnet" "web_server_instances_private" { # OK
   }
 }
 
-# ** network acl for private subnets
+# ** private subnets for the asgs 2
+resource "aws_subnet" "web_server_instances_private_2" { # OK
+  vpc_id     = aws_vpc.web_server.id
+  cidr_block = "10.0.6.0/24"
 
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = false
+
+  tags = {
+    Name = "web_server_instances_private_2"
+  }
+}
+
+# ** network acl for private subnets
 resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
   vpc_id = aws_vpc.web_server.id
 
@@ -241,6 +301,53 @@ resource "aws_network_acl" "web_server_allow_in_out_all" { # OK
   }
 }
 
+# ** network acl for private subnets 2
+resource "aws_network_acl" "web_server_2_allow_in_out_all" { # OK
+  vpc_id = aws_vpc.web_server.id
+
+  subnet_ids = [aws_subnet.web_server_instances_private_2.id]
+
+  # ingress { # ftp
+  #   protocol   = "tcp"
+  #   rule_no    = 1
+  #   action     = "allow"
+  #   cidr_block = "10.0.0.0/24"
+  #   from_port  = 443
+  #   to_port    = 443
+  # }
+
+  # ingress { # ftp
+  #   protocol   = "tcp"
+  #   rule_no    = 2
+  #   action     = "allow"
+  #   cidr_block = "10.0.1.0/24"
+  #   from_port  = 443
+  #   to_port    = 443
+  # }
+
+  # TOFIX: strengthen
+  egress {
+    rule_no    = 3
+    protocol   = "-1"
+    cidr_block = "0.0.0.0/0"
+    action     = "allow"
+    from_port  = 0
+    to_port    = 0
+  }
+
+  ingress {
+    rule_no    = 4
+    protocol   = "-1"
+    cidr_block = "0.0.0.0/0"
+    action     = "allow"
+    from_port  = 0
+    to_port    = 0
+  }
+
+  tags = {
+    Name = "main"
+  }
+}
 
 # ** vpc interface endpoint configuration for SSM, so private instances can conn
 # as in
@@ -294,7 +401,43 @@ resource "aws_vpc_endpoint" "for_ssm" { # OK
   vpc_endpoint_type   = "Interface"
   private_dns_enabled = true
   subnet_ids          = [aws_subnet.web_server_instances_private.id]
-  # security_group_ids  = [aws_security_group.allow_only_private_instances_ingress_egress_all.id]
+  # security_group_ids = [aws_security_group.allow_only_private_instances_ingress_egress_all.id]
+}
+
+# *** the interface endpoints for the 2nd
+resource "aws_security_group" "allow_only_private_instances_2_ingress_egress_all" {
+  name        = "allow_only_private_instances_2_ingress_egress_all"
+  description = "Allow only private instances to access the interface endpoints"
+  vpc_id      = aws_vpc.web_server.id
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_vpc_security_group_ingress_rule" "allow_only_private_instances_2_ingress" {
+  description       = "Allow ingress only from private subnet 2"
+  security_group_id = aws_security_group.allow_only_private_instances_2_ingress_egress_all.id
+  cidr_ipv4         = "10.0.6.0/24"
+  from_port         = 443
+  to_port           = 443
+  ip_protocol       = "tcp"
+}
+
+resource "aws_vpc_security_group_egress_rule" "allow_only_private_instances_2_egress_all" {
+  description       = "Allow egress all for private instances 2"
+  security_group_id = aws_security_group.allow_only_private_instances_2_ingress_egress_all.id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "-1"
+}
+
+resource "aws_vpc_endpoint" "for_ssm_2" { # OK
+  count             = length(var.ssm_endpoints)
+  vpc_id            = aws_vpc.web_server.id
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.${var.ssm_endpoints[count.index]}"
+  vpc_endpoint_type = "Interface"
+  # private_dns_enabled = true
+  subnet_ids = [aws_subnet.web_server_instances_private_2.id]
+  # security_group_ids = [aws_security_group.allow_only_private_instances_2_ingress_egress_all.id]
 }
 
 resource "aws_vpc_endpoint" "s3" { # OK
@@ -304,7 +447,6 @@ resource "aws_vpc_endpoint" "s3" { # OK
 }
 
 # * nat gateway and route in private subnet to via nat gateway for 0.0.0.0/0
-
 resource "aws_route_table" "web_server_instances_private" { # OK
   vpc_id = aws_vpc.web_server.id
   tags = {
@@ -323,8 +465,26 @@ resource "aws_route" "web_server_instances_private_0_to_nat_gateway" { # OK
   nat_gateway_id         = aws_nat_gateway.for_web_server_private_subnet.id
 }
 
-# * private subnet and nat gateway config
+# * nat gateway and route in private subnet to via nat gateway for 0.0.0.0/0 for 2nd
+resource "aws_route_table" "web_server_instances_private_2" { # OK
+  vpc_id = aws_vpc.web_server.id
+  tags = {
+    Name = "web_server_instances_private_2"
+  }
+}
 
+resource "aws_route_table_association" "web_server_instances_private_2" { # OK
+  subnet_id      = aws_subnet.web_server_instances_private_2.id
+  route_table_id = aws_route_table.web_server_instances_private_2.id
+}
+
+resource "aws_route" "web_server_instances_private_0_to_nat_gateway_2" { # OK
+  route_table_id         = aws_route_table.web_server_instances_private_2.id
+  destination_cidr_block = "0.0.0.0/0" # Any destination
+  nat_gateway_id         = aws_nat_gateway.for_web_server_private_subnet_2.id
+}
+
+# * private subnet and nat gateway config
 #checkov:skip=CKV2_AWS_19:EIP is allocated to NAT gateway
 resource "aws_eip" "for_nat_gateway" { # OK
   depends_on = [aws_internet_gateway.web_server_public]
@@ -336,6 +496,24 @@ resource "aws_nat_gateway" "for_web_server_private_subnet" { # OK
 
   tags = {
     Name = "for_web_server_private_subnet"
+  }
+  # To ensure proper ordering, it is recommended to add an explicit dependency
+  # on the Internet Gateway for the VPC.
+  depends_on = [aws_internet_gateway.web_server_public]
+}
+
+# * private subnet and nat gateway config for 2nd
+#checkov:skip=CKV2_AWS_19:EIP is allocated to NAT gateway
+resource "aws_eip" "for_nat_gateway_2" { # OK
+  depends_on = [aws_internet_gateway.web_server_public]
+}
+
+resource "aws_nat_gateway" "for_web_server_private_subnet_2" { # OK
+  allocation_id = aws_eip.for_nat_gateway_2.id
+  subnet_id     = aws_subnet.web_server_public_2.id
+
+  tags = {
+    Name = "for_web_server_private_subnet_2"
   }
   # To ensure proper ordering, it is recommended to add an explicit dependency
   # on the Internet Gateway for the VPC.

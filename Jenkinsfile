@@ -21,69 +21,69 @@ pipeline {
     }
     options {
         timeout(time:5, unit: 'MINUTES')
+        parallelAlwaysFailFast()
     }
     stages {
-        stage('Notify') {
-            steps {
-                // Notify a start of build; appends the extra message at the end (note: prefix with separators if needed)
-                ircNotify notifyOnStart:true, extraMessage: "Running build ${env.JOB_NAME}... at ${env.BUILD_URL}"
-            }
-        }
-        stage('BetterLeaks') {
-            steps {
-                sh 'betterleaks git -v .'
-            }
-        }
-        stage('ClamAV') {
-            steps {
-                sh 'clamscan --recursive .'
-            }
-        }
         stage('TerraformInit') {
             steps {
                 sh 'terraform init'
             }
         }
-        stage ('TerraformValidate') {
-            steps {
-                sh 'terraform validate'
-            }
-        }
-        stage('TerraformPlan') {
-            steps {
-                sh 'terraform plan'
-            }
-        }
-        stage('TfLint') {
-            steps {
-                sh 'tflint --init' // expect .tflint.tcl
-                // across builds
-                sh 'tflint --recursive'
-            }
-        }
-        // TODO: setup
-        // stage('Checkov') {
-        //     steps {
-        //         sh 'checkov --quiet --skip-resources-without-violations -d .'
-        //     }
-        // }y
-        stage('TrivyConfig') {
-            steps {
-                sh 'trivy config --report summary . --ignorefile .trivyignore'
-            }
-        }
-        stage('OPA') {
-            steps {
-                // TODO
-                sh 'echo "doing opa"'
-            }
-        }
-        stage('Terratest') {
-            steps {
-                sh "go mod init ${env.GIT_URL}"
-                sh 'go mod tidy'
-                sh 'cd tests'
-                sh 'go test -v -timeout 10m'
+        stage('Parallel Stage') {
+            failFast true
+            parallel {
+                stage('Notify') {
+                    steps {
+                        // Notify a start of build; appends the extra message at the end (note: prefix with separators if needed)
+                        ircNotify notifyOnStart:true, extraMessage: "Running build ${env.JOB_NAME}... at ${env.BUILD_URL}"
+                    }
+                }
+                stage('BetterLeaks') {
+                    steps {
+                        sh 'betterleaks git -v .'
+                    }
+                }
+                stage('ClamAV') {
+                    steps {
+                        sh 'clamscan --recursive .'
+                    }
+                }
+                stage ('TerraformValidate') {
+                    steps {
+                        sh 'terraform validate'
+                    }
+                }
+                stage('TerraformPlan') {
+                    steps {
+                        sh 'terraform plan'
+                    }
+                }
+                stage('TfLint') {
+                    steps {
+                        sh 'tflint --init' // expect .tflint.tcl
+                        // across builds
+                        sh 'tflint --recursive'
+                    }
+                }
+                // TODO: setup
+                // stage('Checkov') {
+                //     steps {
+                //         sh 'checkov --quiet --skip-resources-without-violations -d .'
+                //     }
+                // }y
+                stage('TrivyConfig') {
+                    steps {
+                        sh 'trivy config --report summary . --ignorefile .trivyignore'
+                    }
+                }
+                stage('Terratest') {
+                    steps {
+                        sh "go mod init ${env.GIT_URL}"
+                        sh 'go mod tidy'
+                        sh 'cd tests'
+                        sh 'go test -v -timeout 10m'
+                    }
+                }
             }
         }
         stage('Deploy') {

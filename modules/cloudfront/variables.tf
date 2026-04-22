@@ -38,6 +38,16 @@ variable "web_server_alb_dns_name" {
   type        = string
 }
 
+variable "web_server_alb_2_arn" {
+  description = "The ARN of the 2nd ALB"
+  type        = string
+}
+
+variable "web_server_alb_2_dns_name" {
+  description = "The DNS Name of the 2nd ALB"
+  type        = string
+}
+
 variable "web_server_cloudfront_secret_value" {
   description = "X-Custom-Secret header to pass to ALB for it to work"
   type        = string
